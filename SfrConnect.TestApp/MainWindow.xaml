@@ -1,8 +1,8 @@
 <Window x:Class="SfrConnect.TestApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SfrConnect — проверка станции" Width="850" Height="760"
-        MinWidth="720" MinHeight="680" Background="#F4F6F9"
+        Title="SfrConnect — проверка станции" Width="850" Height="830"
+        MinWidth="720" MinHeight="750" Background="#F4F6F9"
         FontFamily="Segoe UI" FontSize="14" Closing="Window_Closing">
     <Grid Margin="24">
         <Grid.RowDefinitions>
@@ -49,6 +49,8 @@
                         <TextBox x:Name="NewNumberBox" FontSize="22" Padding="8,3" MaxLength="8" TextChanged="Number_TextChanged" />
                     </DockPanel>
                     <TextBlock x:Name="ValidationText" FontSize="12" Foreground="#9A3412" Margin="0,5,0,0" />
+                    <CheckBox x:Name="ClearBeforeWriteBox" Content="Очистить отметки при записи" Margin="0,8,0,0" />
+                    <Button x:Name="ClearButton" Content="Очистить отметки, сохранив номер" Click="Clear_Click" Margin="0,10,0,0" HorizontalAlignment="Left" />
                     <Button x:Name="CancelAssignmentButton" Content="Отменить ожидание" Click="CancelAssignment_Click" Visibility="Collapsed" Margin="0,8,0,0" />
                     <TextBlock Text="Нажмите «Записать», затем приложите чип. Дождитесь подтверждения и сигнала." TextWrapping="Wrap" Foreground="#526174" Margin="0,8,0,0" />
                 </StackPanel>

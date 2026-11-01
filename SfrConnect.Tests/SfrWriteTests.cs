@@ -73,7 +73,7 @@ public partial class SfrWriteTests
         Assert.Equal(Convert.FromHexString("3F09FD02030300000008FE"), write[..11]);
         Assert.Equal(64, write.Length);
         Assert.All(write[11..], value => Assert.Equal(0, value));
-        Assert.Equal(new byte[] { 1, 3, 1, 3, 1, 3, 1 }, transport.Writes.Select(report => report[4]).ToArray());
+        Assert.Equal(new byte[] { 1, 4, 3, 1, 3, 1, 4, 3, 1 }, transport.Writes.Select(report => report[4]).ToArray());
         Assert.Contains(log, message => message.Contains("Запись подтверждена повторным чтением"));
     }
 
@@ -193,7 +193,7 @@ public partial class SfrWriteTests
         Assert.Throws<InvalidOperationException>(() => station.WriteCardNumber(2, 3));
         Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
         Assert.Single(transport.Writes, report => report[3] == 2);
-        Assert.Equal(4, transport.Writes.Count);
+        Assert.Equal(5, transport.Writes.Count);
     }
 
     [Fact]
@@ -255,6 +255,7 @@ public partial class SfrWriteTests
 
     private sealed class ScriptedStream(params byte[][] responses) : MemoryStream
     {
+        private bool headerRequested;
         private readonly Queue<byte[]> responses = new(responses);
         public List<byte[]> Writes { get; } = [];
         public bool FailWrite { get; init; }
@@ -266,6 +267,7 @@ public partial class SfrWriteTests
         {
             var report = buffer.AsSpan(offset, count).ToArray();
             Writes.Add(report);
+            headerRequested = report[3] == 1 && report[4] == 4;
             OnWrite?.Invoke(report);
             if (FailSignal && report[3] == 3) throw new IOException("Signal unavailable.");
             if (FailWrite && report[3] == 2)
@@ -276,6 +278,13 @@ public partial class SfrWriteTests
 
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (headerRequested)
+            {
+                headerRequested = false;
+                var header = Frame(1, 4, 5, 0, 0, 0);
+                header.CopyTo(buffer, offset);
+                return header.Length;
+            }
             if (!responses.TryDequeue(out var response))
             {
                 throw new TimeoutException("Simulated station timeout.");

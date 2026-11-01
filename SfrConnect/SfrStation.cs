@@ -4,7 +4,7 @@ using HidSharp;
 namespace SfrConnect;
 
 /// <summary>A synchronous connection to the SFR USB HID readout station.</summary>
-public sealed class SfrStation : IDisposable
+public sealed partial class SfrStation : IDisposable
 {
     public const int VendorId = 0x2047;
     public const int ProductId = 0x0301;
@@ -142,7 +142,7 @@ public sealed class SfrStation : IDisposable
             var writeAttempted = false;
             try
             {
-                var snapshot = ReadSnapshot()
+                var snapshot = ReadSnapshot(participantOnly: true)
                     ?? throw new SfrCardNotReadyException("Чип не обнаружен или недоступен. Запись не отправлена.");
                 cancellationToken.ThrowIfCancellationRequested();
                 int currentNumber = SfrProtocol.DecodeCardNumber(snapshot.NumberCell);
@@ -166,7 +166,7 @@ public sealed class SfrStation : IDisposable
                 stream.Write(request, 0, request.Length);
                 ReadWriteResponse();
 
-                var verified = ReadSnapshot()
+                var verified = ReadSnapshot(participantOnly: true)
                     ?? throw new IOException("Чип недоступен после записи.");
                 if (!verified.Marker.AsSpan().SequenceEqual(snapshot.Marker) ||
                     !verified.NumberCell.AsSpan().SequenceEqual(desiredCell))
@@ -177,6 +177,10 @@ public sealed class SfrStation : IDisposable
                 return new SfrCardNumber(newNumber, Convert.ToHexString(verified.Marker));
             }
             catch (SfrCardNotReadyException) when (!writeAttempted)
+            {
+                throw;
+            }
+            catch (SfrProtectedCardException) when (!writeAttempted)
             {
                 throw;
             }
@@ -207,12 +211,17 @@ public sealed class SfrStation : IDisposable
         }
     }
 
-    private (byte[] Marker, byte[] NumberCell)? ReadSnapshot()
+    private (byte[] Marker, byte[] NumberCell)? ReadSnapshot(bool participantOnly = false)
     {
         var marker = ReadCell(1);
         if (marker is null)
         {
             return null;
+        }
+        if (participantOnly)
+        {
+            var header = ReadCell(4) ?? throw new SfrCardNotReadyException("Чип убран при проверке типа.");
+            EnsureParticipant(header);
         }
         var numberCell = ReadCell(3)
             ?? throw new SfrCardNotReadyException("Чип убран во время чтения номера.");

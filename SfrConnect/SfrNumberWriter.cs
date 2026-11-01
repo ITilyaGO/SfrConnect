@@ -1,9 +1,12 @@
 namespace SfrConnect;
 
-public enum SfrAssignmentStage { WaitingForRemoval, WaitingForCard, Writing }
+public enum SfrAssignmentStage { WaitingForRemoval, WaitingForCard, Writing, Clearing }
 
 /// <summary>A verified number. SignalSent confirms USB transmission, not audible feedback.</summary>
-public sealed record SfrNumberAssignmentResult(SfrCardNumber Card, bool SignalSent, string? SignalError);
+public sealed record SfrNumberAssignmentResult(SfrCardNumber Card, bool SignalSent, string? SignalError)
+{
+    public bool CardCleared { get; init; }
+}
 
 /// <summary>
 /// Waits for a card, writes and verifies one number, then sends the success signal.
@@ -26,25 +29,37 @@ public sealed class SfrNumberWriter
     /// once writing begins, verification and the final result take precedence over cancellation.
     /// Set waitForRemoval when a previous card must first be removed (two absent samples).
     /// </summary>
-    public async Task<SfrNumberAssignmentResult> AssignAsync(int number,
+    public Task<SfrNumberAssignmentResult> AssignAsync(int number,
         CancellationToken cancellationToken = default,
+        IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false, bool clearCard = false)
+        => RunAsync(number, cancellationToken, progress, waitForRemoval, clearCard);
+
+    /// <summary>Waits for a participant card and clears its recorded punches while preserving its number.</summary>
+    public Task<SfrNumberAssignmentResult> ClearAsync(CancellationToken cancellationToken = default,
         IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false)
+        => RunAsync(null, cancellationToken, progress, waitForRemoval, true);
+
+    private async Task<SfrNumberAssignmentResult> RunAsync(int? number, CancellationToken cancellationToken,
+        IProgress<SfrAssignmentStage>? progress, bool waitForRemoval, bool clearCard)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(number);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(number, SfrStation.MaximumWritableCardNumber);
+        if (number.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(number.Value);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(number.Value, SfrStation.MaximumWritableCardNumber);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         if (Interlocked.CompareExchange(ref running, 1, 0) != 0)
             throw new InvalidOperationException("Команда записи уже выполняется.");
         try
         {
-            return await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval))
+            return await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval, clearCard))
                 .ConfigureAwait(false);
         }
         finally { Volatile.Write(ref running, 0); }
     }
 
-    private SfrNumberAssignmentResult AssignCore(int number, CancellationToken cancellationToken,
-        IProgress<SfrAssignmentStage>? progress, bool waitForRemoval)
+    private SfrNumberAssignmentResult AssignCore(int? number, CancellationToken cancellationToken,
+        IProgress<SfrAssignmentStage>? progress, bool waitForRemoval, bool clearCard)
     {
         progress?.Report(waitForRemoval ? SfrAssignmentStage.WaitingForRemoval : SfrAssignmentStage.WaitingForCard);
         var absentSamples = 0;
@@ -53,7 +68,7 @@ public sealed class SfrNumberWriter
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var card = station.ReadCardNumber();
+                var card = station.ReadCardInfo();
                 cancellationToken.ThrowIfCancellationRequested();
                 if (waitForRemoval)
                 {
@@ -66,17 +81,21 @@ public sealed class SfrNumberWriter
                 }
                 else if (card is not null)
                 {
-                    progress?.Report(SfrAssignmentStage.Writing);
-                    var verified = station.WriteCardNumberCancellable(card.Number, number, cancellationToken);
+                    if (card.Kind != SfrCardKind.Participant)
+                        throw new SfrProtectedCardException(card.Kind, Convert.FromHexString(card.HeaderHex));
+                    progress?.Report(clearCard ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
+                    var verified = clearCard
+                        ? station.ClearCardCore(number, card.Number, cancellationToken)
+                        : station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
                     try
                     {
                         station.Beep();
-                        return new SfrNumberAssignmentResult(verified, true, null);
+                        return new SfrNumberAssignmentResult(verified, true, null) { CardCleared = clearCard };
                     }
                     catch (Exception error)
                     {
                         // A signal failure cannot turn a verified write into a failed write.
-                        return new SfrNumberAssignmentResult(verified, false, error.Message);
+                        return new SfrNumberAssignmentResult(verified, false, error.Message) { CardCleared = clearCard };
                     }
                 }
             }

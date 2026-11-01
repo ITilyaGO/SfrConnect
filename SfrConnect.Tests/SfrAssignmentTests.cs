@@ -69,7 +69,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(Marker());
         using var station = new SfrStation(transport);
         await Assert.ThrowsAsync<TimeoutException>(() => new SfrNumberWriter(station).AssignAsync(3));
-        Assert.Equal(2, transport.Writes.Count);
+        Assert.Equal(3, transport.Writes.Count);
         Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
     }
 
@@ -148,7 +148,7 @@ public partial class SfrWriteTests
         using var cancellation = new CancellationTokenSource();
         var reads = 0;
         using var transport = new ScriptedStream(Snapshot(2).Concat(Snapshot(2)).ToArray())
-        { OnWrite = report => { if (report[3] == 1 && ++reads == 4) cancellation.Cancel(); } };
+        { OnWrite = report => { if (report[3] == 1 && ++reads == 5) cancellation.Cancel(); } };
         using var station = new SfrStation(transport);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             new SfrNumberWriter(station).AssignAsync(3, cancellation.Token));

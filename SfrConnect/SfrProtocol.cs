@@ -13,7 +13,9 @@ internal static class SfrProtocol
         return [(byte)(number % 200), (byte)(number / 200), 0, 0];
     }
 
-    internal static byte[] CreateNumberWriteReport(ReadOnlySpan<byte> cell)
+    internal static byte[] CreateNumberWriteReport(ReadOnlySpan<byte> cell) => CreateWriteReport(3, cell);
+
+    internal static byte[] CreateWriteReport(byte position, ReadOnlySpan<byte> cell)
     {
         if (cell.Length != 4)
         {
@@ -24,7 +26,7 @@ internal static class SfrProtocol
         report[1] = 9;
         report[2] = 0xFD;
         report[3] = 2;
-        report[4] = 3;
+        report[4] = position;
         cell.CopyTo(report.AsSpan(5, 4));
         report[9] = Checksum(report.AsSpan(3, 6));
         report[10] = 0xFE;
@@ -49,6 +51,21 @@ internal static class SfrProtocol
             sum = (sum & 0xFF) + (sum >> 8);
         }
         return (byte)sum;
+    }
+
+    internal static SfrCardKind ClassifyCard(ReadOnlySpan<byte> header)
+    {
+        if (header.Length != 4) throw new ArgumentException("Ожидалась ячейка из четырёх байтов.", nameof(header));
+        if (header[0] >= 5 && header[1] == 0 && header[2] == 0 && header[3] == 0)
+            return SfrCardKind.Participant;
+        // Known commands from SFR basic and SFR phone; other layouts remain protected.
+        if (header.SequenceEqual(new byte[] { 0, 1, 0, 0 }) ||
+            header.SequenceEqual(new byte[] { 5, 5, 5, 5 }) ||
+            header.SequenceEqual(new byte[] { 3, 3, 3, 3 }) ||
+            (header[1] == 2 && header[0] is 1 or 2 or 3 or 5 or 9 && header[2] == 0 && header[3] == 0) ||
+            (header[1] == 9 && header[0] is 1 or 2))
+            return SfrCardKind.Service;
+        return SfrCardKind.Unknown;
     }
 
     internal static byte[] ParseFrame(ReadOnlySpan<byte> report)

@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private readonly Queue<string> logLines = new();
     private SfrStation? station;
     private SfrNumberWriter? numberWriter;
+    private SfrCardInfo? cardInfo;
     private CancellationTokenSource? assignmentCancellation;
     private readonly StationOperations operations = new();
     private bool monitoring;
@@ -54,6 +55,11 @@ public partial class MainWindow : Window
         try
         {
             await operation();
+        }
+        catch (SfrProtectedCardException error)
+        {
+            ShowResult(error.Message, true);
+            QueueLog($"{error.Message} Ячейка 04: {error.HeaderHex}.");
         }
         catch (Exception error)
         {
@@ -110,6 +116,7 @@ public partial class MainWindow : Window
         pollTimer.Stop();
         monitoring = false;
         presence.Invalidate();
+        cardInfo = null;
         var oldStation = station;
         station = null;
         numberWriter = null;
@@ -126,13 +133,17 @@ public partial class MainWindow : Window
         var activeStation = station ?? throw new InvalidOperationException("Станция не подключена.");
         try
         {
-            var card = await Task.Run(activeStation.ReadCardNumber);
-            presence.Observe(card);
+            cardInfo = await Task.Run(activeStation.ReadCardInfo);
+            if (cardInfo is null) presence.Observe(null);
+            else if (cardInfo.Kind == SfrCardKind.Participant)
+                presence.Observe(new SfrCardNumber(cardInfo.Number!.Value, cardInfo.MarkerHex));
+            else presence.Invalidate();
         }
         catch (SfrCardNotReadyException)
         {
             // A partial read does not prove either a stable card or a confirmed removal.
             presence.Invalidate();
+            cardInfo = null;
             QueueLog("Чип снят или перемещён во время чтения. Ожидание продолжается.");
         }
     }
@@ -166,6 +177,16 @@ public partial class MainWindow : Window
     private async void Write_Click(object sender, RoutedEventArgs e)
     {
         if (!TryGetNewNumber(out var number)) return;
+        await RunCardCommandAsync(number, ClearBeforeWriteBox.IsChecked == true);
+    }
+
+    private async void Clear_Click(object sender, RoutedEventArgs e) => await RunCardCommandAsync(null, true);
+
+    private async Task RunCardCommandAsync(int? number, bool clearCard)
+    {
+        var action = number.HasValue
+            ? (clearCard ? $"Очистить отметки и записать {number}" : $"Записать {number}")
+            : "Очистить отметки, сохранив номер";
         await RunOperationAsync(async () =>
         {
             var writer = numberWriter ?? throw new InvalidOperationException("Станция не подключена.");
@@ -176,29 +197,40 @@ public partial class MainWindow : Window
                 if (!ReferenceEquals(assignmentCancellation, cancellation) || closing) return;
                 ShowResult(stage switch
                 {
-                    SfrAssignmentStage.WaitingForRemoval => $"Номер {number} ожидает записи. Уберите предыдущий чип, затем приложите следующий.",
-                    SfrAssignmentStage.WaitingForCard => $"Готов записать {number}. Приложите чип к станции.",
+                    SfrAssignmentStage.WaitingForRemoval => $"{action}. Уберите предыдущий чип, затем приложите следующий.",
+                    SfrAssignmentStage.WaitingForCard => $"{action}. Приложите чип к станции.",
+                    SfrAssignmentStage.Clearing => "Очищаем отметки и проверяем ячейки. Не убирайте чип до завершения.",
                     _ => $"Записываем {number} и проверяем. Не убирайте чип."
                 });
-                CancelAssignmentButton.IsEnabled = stage != SfrAssignmentStage.Writing && !cancellation.IsCancellationRequested;
+                CancelAssignmentButton.IsEnabled = stage is SfrAssignmentStage.WaitingForCard or SfrAssignmentStage.WaitingForRemoval && !cancellation.IsCancellationRequested;
             });
-            ShowResult($"Готов записать {number}. Приложите чип к станции.");
+            ShowResult($"{action}. Приложите чип к станции.");
             UpdateControls();
             try
             {
-                var result = await writer.AssignAsync(number, cancellation.Token, progress, presence.RequiresRemoval);
+                var result = number.HasValue
+                    ? await writer.AssignAsync(number.Value, cancellation.Token, progress, presence.RequiresRemoval, clearCard)
+                    : await writer.ClearAsync(cancellation.Token, progress, presence.RequiresRemoval);
                 presence.Observe(result.Card);
                 presence.MarkWriteAttempt();
+                var completed = result.CardCleared
+                    ? $"Отметки очищены, номер {result.Card.Number} проверен"
+                    : $"Номер {result.Card.Number} проверен";
                 ShowResult(result.SignalSent
-                    ? $"Готово: номер {result.Card.Number} проверен, сигнал отправлен. Можно убрать чип."
-                    : $"Номер {result.Card.Number} проверен, но сигнал не отправлен: {result.SignalError}", !result.SignalSent);
+                    ? $"{completed}, сигнал отправлен. Можно убрать чип."
+                    : $"{completed}, но сигнал не отправлен: {result.SignalError}", !result.SignalSent);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
                 presence.Invalidate();
-                ShowResult("Ожидание отменено. Номер не записывался.");
+                ShowResult("Ожидание отменено. Данные чипа не изменялись.");
             }
             catch (SfrWriteUnverifiedException)
+            {
+                presence.MarkWriteAttempt();
+                throw;
+            }
+            catch (SfrCardUpdateUnverifiedException)
             {
                 presence.MarkWriteAttempt();
                 throw;
@@ -215,7 +247,7 @@ public partial class MainWindow : Window
     {
         assignmentCancellation?.Cancel();
         CancelAssignmentButton.IsEnabled = false;
-        ShowResult("Отменяем ожидание. Если запись уже началась, дождёмся результата проверки.");
+        ShowResult("Отменяем ожидание. Если изменение чипа уже началось, дождёмся результата проверки.");
     }
 
     private bool TryGetNewNumber(out int number) => int.TryParse(NewNumberBox.Text.Trim(),
@@ -236,12 +268,17 @@ public partial class MainWindow : Window
         BeepButton.IsEnabled = available && connected;
         NewNumberBox.IsEnabled = !closing && assignmentCancellation is null;
         var valid = TryGetNewNumber(out _);
-        WriteButton.IsEnabled = available && connected && valid;
+        var protectedCard = cardInfo is not null && cardInfo.Kind != SfrCardKind.Participant;
+        WriteButton.IsEnabled = available && connected && valid && !protectedCard;
+        ClearButton.IsEnabled = available && connected && !protectedCard;
+        ClearBeforeWriteBox.IsEnabled = available;
         CancelAssignmentButton.Visibility = assignmentCancellation is null ? Visibility.Collapsed : Visibility.Visible;
         CancelAssignmentButton.IsEnabled = assignmentCancellation is not null && !assignmentCancellation.IsCancellationRequested && !closing;
         ValidationText.Text = NewNumberBox.Text.Length > 0 && !valid ? "Введите целое число от 0 до 39999." : "";
         CardNumberText.Text = presence.Current?.Number.ToString(CultureInfo.InvariantCulture) ?? "—";
-        CardHintText.Text = !connected ? "Подключите станцию" : !monitoring ? "Чтение остановлено"
+        CardHintText.Text = !connected ? "Подключите станцию"
+            : protectedCard ? (cardInfo!.Kind == SfrCardKind.Service ? "Служебный чип — изменение запрещено" : "Неизвестный формат — изменение запрещено")
+            : !monitoring ? "Чтение остановлено"
             : presence.RequiresRemoval ? "Уберите чип перед следующей записью"
             : presence.Current is null ? "Приложите чип к станции" : "Чип доступен для записи";
     }
