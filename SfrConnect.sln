@@ -1,0 +1,65 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37806.7
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SfrConnect", "SfrConnect\SfrConnect.csproj", "{6B876929-1C2E-42DE-9863-DBDA798705F0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SfrConnect.Diagnostics", "SfrConnect.Diagnostics\SfrConnect.Diagnostics.csproj", "{14E93AA3-79B5-4765-B77A-0ED31440457B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SfrConnect.Tests", "SfrConnect.Tests\SfrConnect.Tests.csproj", "{C4A6299C-1685-4685-971A-70FF9F649D6B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|x64.Build.0 = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Debug|x86.Build.0 = Debug|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|x64.ActiveCfg = Release|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|x64.Build.0 = Release|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|x86.ActiveCfg = Release|Any CPU
+		{6B876929-1C2E-42DE-9863-DBDA798705F0}.Release|x86.Build.0 = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|x64.Build.0 = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Debug|x86.Build.0 = Debug|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|x64.ActiveCfg = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|x64.Build.0 = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|x86.ActiveCfg = Release|Any CPU
+		{14E93AA3-79B5-4765-B77A-0ED31440457B}.Release|x86.Build.0 = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|x64.Build.0 = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Debug|x86.Build.0 = Debug|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|x64.ActiveCfg = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|x64.Build.0 = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|x86.ActiveCfg = Release|Any CPU
+		{C4A6299C-1685-4685-971A-70FF9F649D6B}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1DBB6CA1-0B7D-4C74-9B62-0681F9603EBF}
+	EndGlobalSection
+EndGlobal
