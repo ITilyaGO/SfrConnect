@@ -61,7 +61,7 @@ public partial class MainWindow : Window
             ShowResult(unverified
                 ? $"Запись не подтверждена. Номер мог измениться. Подключитесь заново и прочитайте чип. {error.Message}"
                 : error.Message, true);
-            AppendLog(error.ToString());
+            QueueLog(error.ToString());
             await DisconnectAsync();
             ConnectionText.Text = "Обмен остановлен. Проверьте USB и подключитесь заново.";
         }
@@ -124,8 +124,17 @@ public partial class MainWindow : Window
     private async Task ReadCardAsync()
     {
         var activeStation = station ?? throw new InvalidOperationException("Станция не подключена.");
-        var card = await Task.Run(activeStation.ReadCardNumber);
-        presence.Observe(card);
+        try
+        {
+            var card = await Task.Run(activeStation.ReadCardNumber);
+            presence.Observe(card);
+        }
+        catch (SfrCardNotReadyException)
+        {
+            // A partial read does not prove either a stable card or a confirmed removal.
+            presence.Invalidate();
+            QueueLog("Чип снят или перемещён во время чтения. Ожидание продолжается.");
+        }
     }
 
     private async void Monitor_Click(object sender, RoutedEventArgs e)
@@ -255,14 +264,15 @@ public partial class MainWindow : Window
 
     private void QueueLog(string message)
     {
+        var timestamp = DateTime.Now;
         // Never block the USB worker on the dispatcher while the window is closing.
         if (!Dispatcher.HasShutdownStarted)
-            Dispatcher.BeginInvoke(new Action(() => AppendLog(message)));
+            Dispatcher.BeginInvoke(new Action(() => AppendLog(message, timestamp)));
     }
 
-    private void AppendLog(string message)
+    private void AppendLog(string message, DateTime? timestamp = null)
     {
-        logLines.Enqueue($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        logLines.Enqueue($"[{timestamp ?? DateTime.Now:HH:mm:ss.fff}] {message}");
         while (logLines.Count > 500) logLines.Dequeue();
         LogBox.Text = string.Join(Environment.NewLine, logLines);
         LogBox.ScrollToEnd();

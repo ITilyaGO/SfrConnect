@@ -122,7 +122,7 @@ public partial class SfrWriteTests
     {
         using var transport = new ScriptedStream(Frame(0x2A, 6));
         using var station = new SfrStation(transport);
-        Assert.Throws<IOException>(() => station.WriteCardNumber(2, 3));
+        Assert.Throws<SfrCardNotReadyException>(() => station.WriteCardNumber(2, 3));
         Assert.DoesNotContain(transport.Writes, report => report[3] == 2);
     }
 
@@ -131,7 +131,7 @@ public partial class SfrWriteTests
     {
         using var transport = new ScriptedStream(Marker(), Number(2), Frame(0x2A, 6));
         using var station = new SfrStation(transport);
-        Assert.Throws<IOException>(() => station.WriteCardNumber(2, 3));
+        Assert.Throws<SfrCardNotReadyException>(() => station.WriteCardNumber(2, 3));
         Assert.DoesNotContain(transport.Writes, report => report[3] == 2);
     }
 

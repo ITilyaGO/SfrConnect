@@ -2,6 +2,77 @@ namespace SfrConnect.Tests;
 
 public partial class SfrWriteTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task CardMovementDuringSearchContinuesWaiting(int failurePoint)
+    {
+        byte[][] interrupted = failurePoint switch
+        {
+            0 => [Marker(), Frame(0x2A, 6)],
+            1 => [Marker(), Number(2), Frame(0x2A, 6)],
+            _ => [Marker(), Number(2), Marker(4)]
+        };
+        using var transport = new ScriptedStream(interrupted.Concat(AssignmentExchange()).ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.Equal(3, result.Card.Number);
+        Assert.Single(transport.Writes, report => report[3] == 2);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemovalDuringPrewriteReadRetriesOnlyBeforeMutation(bool afterNumber)
+    {
+        var interrupted = afterNumber
+            ? Snapshot(2).Concat(new[] { Marker(), Number(2), Frame(0x2A, 6) })
+            : Snapshot(2).Append(Frame(0x2A, 6));
+        using var transport = new ScriptedStream(interrupted.Concat(AssignmentExchange()).ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.Equal(3, result.Card.Number);
+        Assert.Single(transport.Writes, report => report[3] == 2);
+    }
+
+    [Fact]
+    public async Task RemovalDuringVerificationDoesNotRepeatWriteOrSignal()
+    {
+        var frames = Snapshot(2).Concat(Snapshot(2)).Append(WriteAcknowledgement())
+            .Concat(new[] { Marker(), Number(3), Frame(0x2A, 6) });
+        using var transport = new ScriptedStream(frames.ToArray());
+        using var station = new SfrStation(transport);
+        var error = await Assert.ThrowsAsync<SfrWriteUnverifiedException>(() => new SfrNumberWriter(station).AssignAsync(3));
+        Assert.IsType<SfrCardNotReadyException>(error.InnerException);
+        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.DoesNotContain(transport.Writes, report => report[3] == 3);
+        Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
+    }
+
+    [Fact]
+    public async Task PartialReadDoesNotCountAsConfirmedRemoval()
+    {
+        var frames = new[] { Frame(0x2A, 6), Marker(), Number(3), Frame(0x2A, 6), Frame(0x2A, 6) }
+            .Concat(Snapshot(3)).Concat(new[] { Frame(0x2A, 6), Frame(0x2A, 6) })
+            .Concat(AssignmentExchange());
+        using var transport = new ScriptedStream(frames.ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3, waitForRemoval: true);
+        Assert.Equal(3, result.Card.Number);
+        Assert.Single(transport.Writes, report => report[3] == 2);
+    }
+
+    [Fact]
+    public async Task TimeoutDuringSearchIsNotRetriedAsCardMovement()
+    {
+        using var transport = new ScriptedStream(Marker());
+        using var station = new SfrStation(transport);
+        await Assert.ThrowsAsync<TimeoutException>(() => new SfrNumberWriter(station).AssignAsync(3));
+        Assert.Equal(2, transport.Writes.Count);
+        Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
+    }
+
     [Fact]
     public async Task ReadAfterAssignmentWaitsForStationSignalToFinish()
     {

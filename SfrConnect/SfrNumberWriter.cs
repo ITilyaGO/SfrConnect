@@ -51,31 +51,40 @@ public sealed class SfrNumberWriter
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var card = station.ReadCardNumber();
-            cancellationToken.ThrowIfCancellationRequested();
-            if (waitForRemoval)
+            try
             {
-                absentSamples = card is null ? absentSamples + 1 : 0;
-                if (absentSamples >= 2)
+                var card = station.ReadCardNumber();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (waitForRemoval)
                 {
-                    waitForRemoval = false;
-                    progress?.Report(SfrAssignmentStage.WaitingForCard);
+                    absentSamples = card is null ? absentSamples + 1 : 0;
+                    if (absentSamples >= 2)
+                    {
+                        waitForRemoval = false;
+                        progress?.Report(SfrAssignmentStage.WaitingForCard);
+                    }
+                }
+                else if (card is not null)
+                {
+                    progress?.Report(SfrAssignmentStage.Writing);
+                    var verified = station.WriteCardNumberCancellable(card.Number, number, cancellationToken);
+                    try
+                    {
+                        station.Beep();
+                        return new SfrNumberAssignmentResult(verified, true, null);
+                    }
+                    catch (Exception error)
+                    {
+                        // A signal failure cannot turn a verified write into a failed write.
+                        return new SfrNumberAssignmentResult(verified, false, error.Message);
+                    }
                 }
             }
-            else if (card is not null)
+            catch (SfrCardNotReadyException)
             {
-                progress?.Report(SfrAssignmentStage.Writing);
-                var verified = station.WriteCardNumberCancellable(card.Number, number, cancellationToken);
-                try
-                {
-                    station.Beep();
-                    return new SfrNumberAssignmentResult(verified, true, null);
-                }
-                catch (Exception error)
-                {
-                    // A signal failure cannot turn a verified write into a failed write.
-                    return new SfrNumberAssignmentResult(verified, false, error.Message);
-                }
+                // Only completed reads before any write attempt are safe to repeat.
+                absentSamples = 0;
+                progress?.Report(waitForRemoval ? SfrAssignmentStage.WaitingForRemoval : SfrAssignmentStage.WaitingForCard);
             }
             if (cancellationToken.WaitHandle.WaitOne(250)) cancellationToken.ThrowIfCancellationRequested();
         }

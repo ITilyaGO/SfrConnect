@@ -34,7 +34,7 @@ public class SfrReadTests
         responses.Add(Convert.FromHexString(UnavailableReply));
         using var transport = new ScriptedStream(responses.ToArray());
         using var station = new SfrStation(transport);
-        Assert.Throws<IOException>(() => station.ReadCardNumber());
+        Assert.Throws<SfrCardNotReadyException>(() => station.ReadCardNumber());
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public class SfrReadTests
         using var transport = new ScriptedStream(
             Cell(1, 1, 2, 3, 4), Cell(3, 185, 2, 0, 0), Cell(1, 4, 3, 2, 1));
         using var station = new SfrStation(transport);
-        Assert.Throws<IOException>(() => station.ReadCardNumber());
+        Assert.Throws<SfrCardNotReadyException>(() => station.ReadCardNumber());
     }
 
     [Theory]

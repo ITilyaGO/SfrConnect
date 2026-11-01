@@ -95,6 +95,11 @@ public sealed class SfrStation : IDisposable
                 return snapshot is null ? null : new SfrCardNumber(
                     SfrProtocol.DecodeCardNumber(snapshot.Value.NumberCell), Convert.ToHexString(snapshot.Value.Marker));
             }
+            catch (SfrCardNotReadyException)
+            {
+                // All requested replies were received; there is no pending response to drain.
+                throw;
+            }
             catch
             {
                 // There is no transaction ID; a late response must not satisfy the next read.
@@ -138,7 +143,7 @@ public sealed class SfrStation : IDisposable
             try
             {
                 var snapshot = ReadSnapshot()
-                    ?? throw new IOException("Чип не обнаружен или недоступен. Запись не отправлена.");
+                    ?? throw new SfrCardNotReadyException("Чип не обнаружен или недоступен. Запись не отправлена.");
                 cancellationToken.ThrowIfCancellationRequested();
                 int currentNumber = SfrProtocol.DecodeCardNumber(snapshot.NumberCell);
                 if (expectedCurrentNumber.HasValue && currentNumber != expectedCurrentNumber.Value)
@@ -170,6 +175,10 @@ public sealed class SfrStation : IDisposable
                 }
                 log?.Invoke($"Запись подтверждена повторным чтением: номер {newNumber}.");
                 return new SfrCardNumber(newNumber, Convert.ToHexString(verified.Marker));
+            }
+            catch (SfrCardNotReadyException) when (!writeAttempted)
+            {
+                throw;
             }
             catch (OperationCanceledException) when (!writeAttempted)
             {
@@ -206,11 +215,11 @@ public sealed class SfrStation : IDisposable
             return null;
         }
         var numberCell = ReadCell(3)
-            ?? throw new IOException("Чип убран во время чтения номера.");
+            ?? throw new SfrCardNotReadyException("Чип убран во время чтения номера.");
         var finalMarker = ReadCell(1);
         if (finalMarker is null || !marker.AsSpan().SequenceEqual(finalMarker))
         {
-            throw new IOException("Чип убран или его данные изменились во время чтения. Повторите чтение.");
+            throw new SfrCardNotReadyException("Чип убран или его данные изменились во время чтения. Повторите чтение.");
         }
         return (marker, numberCell);
     }
