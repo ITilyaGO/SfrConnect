@@ -2,6 +2,45 @@ namespace SfrConnect.Tests;
 
 public partial class SfrWriteTests
 {
+    [Fact]
+    public async Task ReadAfterAssignmentWaitsForStationSignalToFinish()
+    {
+        long? signalStarted = null;
+        using var transport = new ScriptedStream(AssignmentExchange().Concat(Snapshot(3)).ToArray())
+        {
+            OnWrite = report =>
+            {
+                if (report[3] == 3) signalStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                else if (signalStarted is long started && System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds < 300)
+                    throw new TimeoutException("Station is still signaling.");
+            }
+        };
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.True(result.SignalSent);
+        Assert.NotNull(signalStarted);
+        Assert.Equal(3, station.ReadCardNumber()!.Number);
+    }
+
+    [Fact]
+    public void ReadAfterManualSignalAlsoWaits()
+    {
+        long? signalStarted = null;
+        using var transport = new ScriptedStream(Snapshot(2))
+        {
+            OnWrite = report =>
+            {
+                if (report[3] == 3) signalStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                else if (signalStarted is long started && System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds < 300)
+                    throw new TimeoutException("Station is still signaling.");
+            }
+        };
+        using var station = new SfrStation(transport);
+        station.Beep();
+        Assert.NotNull(signalStarted);
+        Assert.Equal(2, station.ReadCardNumber()!.Number);
+    }
+
     private static byte[][] AssignmentExchange(int oldNumber = 2, int newNumber = 3) =>
         Snapshot(oldNumber).Concat(Snapshot(oldNumber)).Append(WriteAcknowledgement())
             .Concat(Snapshot(newNumber)).ToArray();

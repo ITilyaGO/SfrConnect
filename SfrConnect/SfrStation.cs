@@ -12,7 +12,6 @@ public sealed class SfrStation : IDisposable
     private readonly Stream stream;
     private readonly Action<string>? log;
     private readonly object sync = new();
-    private long? lastBeep;
     private bool disposed;
     private bool exchangeFaulted;
 
@@ -63,27 +62,19 @@ public sealed class SfrStation : IDisposable
     }
 
     /// <summary>
-    /// Sends one beep/blink command. A successful write is not a station-level acknowledgement.
+    /// Sends one beep/blink command and waits 300 ms before allowing further commands.
+    /// A successful write is not a station-level acknowledgement.
     /// </summary>
     public void Beep()
     {
         lock (sync)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            if (lastBeep is long previous)
-            {
-                // The station ignores signals sent less than 300 ms apart.
-                var remaining = TimeSpan.FromMilliseconds(300) - Stopwatch.GetElapsedTime(previous);
-                if (remaining > TimeSpan.Zero)
-                {
-                    Thread.Sleep(remaining);
-                }
-            }
-
             var report = SfrProtocol.CreateBeepReport();
             log?.Invoke($"TX попытка ({report.Length} байт): {Convert.ToHexString(report)}");
             stream.Write(report, 0, report.Length);
-            lastBeep = Stopwatch.GetTimestamp();
+            // Match SportOrg's post-signal delay. Keep the lock so reads also wait.
+            Thread.Sleep(300);
             log?.Invoke("TX завершён: запись HID-отчёта выполнена без ошибки. Ответ станции не проверялся.");
         }
     }
