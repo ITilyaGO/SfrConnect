@@ -22,10 +22,9 @@ public class SfrCardMaintenanceTests
         => Assert.Equal(expected, SfrProtocol.ClassifyCard(Convert.FromHexString(hex)));
 
     [Theory]
-    [InlineData("00010000")]
-    [InlineData("05050505")]
     [InlineData("00000000")]
-    public async Task ProtectedCardsCannotBeChangedThroughAnyEntryPoint(string header)
+    [InlineData("06010000")]
+    public async Task UnknownCardsCannotBeChangedThroughAnyEntryPoint(string header)
     {
         using var transport = new CardMemory();
         transport.Cells[4] = Convert.FromHexString(header);
@@ -156,7 +155,7 @@ public class SfrCardMaintenanceTests
         };
         using var station = new SfrStation(transport);
         var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
-        Assert.IsType<SfrProtectedCardException>(error.InnerException);
+        Assert.IsType<SfrCardNotReadyException>(error.InnerException);
         Assert.Single(transport.Mutations);
     }
 
@@ -185,6 +184,94 @@ public class SfrCardMaintenanceTests
     {
         var report = SfrProtocol.CreateWriteReport(127, [0, 0, 0, 0]);
         Assert.Equal(new byte[] { 0x3F, 9, 0xFD, 2, 127, 0, 0, 0, 0, 129, 0xFE }, report[..11]);
+    }
+
+    [Theory]
+    [InlineData("00010000")]
+    [InlineData("01020000")]
+    [InlineData("02020000")]
+    [InlineData("03020000")]
+    [InlineData("05020000")]
+    [InlineData("09020000")]
+    [InlineData("01091234")]
+    [InlineData("02091234")]
+    [InlineData("03030303")]
+    [InlineData("05050505")]
+    public async Task AssignConvertsEveryKnownServiceModeEvenWithoutClearFlag(string header)
+    {
+        using var transport = new CardMemory();
+        transport.Cells[4] = Convert.FromHexString(header);
+        transport.Cells[3] = [255, 255, 255, 255];
+        transport.Cells[127] = [99, 1, 2, 3];
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(123, clearCard: false);
+        Assert.True(result.CardCleared);
+        Assert.True(result.SignalSent);
+        Assert.Equal(123, result.Card.Number);
+        Assert.Equal(4, transport.Mutations[0][4]);
+        Assert.Equal(new byte[] { 5, 0, 0, 0 }, transport.Mutations[0][5..9]);
+        Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
+        Assert.All(transport.Cells.Skip(5), cell => Assert.Equal(new byte[4], cell));
+        Assert.Equal(new byte[4], transport.Cells[2]);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void AllImmediateWriteOverloadsConvertServiceCards(int method)
+    {
+        using var transport = new CardMemory();
+        transport.Cells[4] = [0, 1, 0, 0];
+        using var station = new SfrStation(transport);
+        var result = method switch
+        {
+            0 => station.WriteCardNumber(123),
+            1 => station.WriteCardNumber(2, 123),
+            2 => station.WriteCardNumber(123, clearCard: false),
+            _ => station.WriteCardNumber(123, clearCard: true)
+        };
+        Assert.Equal(123, result.Number);
+        Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
+        Assert.All(transport.Cells.Skip(5), cell => Assert.Equal(new byte[4], cell));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClearServiceCardPreservesValidNumberOrUsesZero(bool invalidNumber)
+    {
+        using var transport = new CardMemory();
+        transport.Cells[4] = [5, 5, 5, 5];
+        if (invalidNumber) transport.Cells[3] = [255, 255, 255, 255];
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).ClearAsync();
+        Assert.Equal(invalidNumber ? 0 : 2, result.Card.Number);
+        Assert.True(result.CardCleared);
+        Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
+    }
+
+    [Fact]
+    public void GuardedConversionChecksExpectedNumberBeforeMutation()
+    {
+        using var transport = new CardMemory();
+        transport.Cells[4] = [0, 1, 0, 0];
+        using var station = new SfrStation(transport);
+        Assert.Throws<InvalidOperationException>(() => station.WriteCardNumber(999, 123));
+        Assert.Empty(transport.Mutations);
+    }
+
+    [Fact]
+    public async Task FailedServiceConversionIsNotReportedOrSignaledAsSuccess()
+    {
+        using var transport = new CardMemory { LoseWriteAck = true };
+        transport.Cells[4] = [0, 1, 0, 0];
+        using var station = new SfrStation(transport);
+        var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).AssignAsync(123));
+        Assert.Equal(4, error.LastAttemptedCell);
+        Assert.Single(transport.Mutations);
+        Assert.DoesNotContain(transport.Requests, request => request[3] == 3);
     }
 
     private sealed class CardMemory : MemoryStream

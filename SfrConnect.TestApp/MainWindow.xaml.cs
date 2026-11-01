@@ -212,6 +212,7 @@ public partial class MainWindow : Window
                     ? await writer.AssignAsync(number.Value, cancellation.Token, progress, presence.RequiresRemoval, clearCard)
                     : await writer.ClearAsync(cancellation.Token, progress, presence.RequiresRemoval);
                 presence.Observe(result.Card);
+                cardInfo = new SfrCardInfo(SfrCardKind.Participant, result.Card.Number, result.Card.MarkerHex, result.CardCleared ? "05000000" : cardInfo?.HeaderHex ?? "");
                 presence.MarkWriteAttempt();
                 var completed = result.CardCleared
                     ? $"Отметки очищены, номер {result.Card.Number} проверен"
@@ -268,7 +269,7 @@ public partial class MainWindow : Window
         BeepButton.IsEnabled = available && connected;
         NewNumberBox.IsEnabled = !closing && assignmentCancellation is null;
         var valid = TryGetNewNumber(out _);
-        var protectedCard = cardInfo is not null && cardInfo.Kind != SfrCardKind.Participant;
+        var protectedCard = cardInfo?.Kind == SfrCardKind.Unknown;
         WriteButton.IsEnabled = available && connected && valid && !protectedCard;
         ClearButton.IsEnabled = available && connected && !protectedCard;
         ClearBeforeWriteBox.IsEnabled = available;
@@ -277,7 +278,8 @@ public partial class MainWindow : Window
         ValidationText.Text = NewNumberBox.Text.Length > 0 && !valid ? "Введите целое число от 0 до 39999." : "";
         CardNumberText.Text = presence.Current?.Number.ToString(CultureInfo.InvariantCulture) ?? "—";
         CardHintText.Text = !connected ? "Подключите станцию"
-            : protectedCard ? (cardInfo!.Kind == SfrCardKind.Service ? "Служебный чип — изменение запрещено" : "Неизвестный формат — изменение запрещено")
+            : protectedCard ? "Неизвестный формат — изменение запрещено"
+            : cardInfo?.Kind == SfrCardKind.Service ? "Служебный чип — при записи или очистке станет обычным"
             : !monitoring ? "Чтение остановлено"
             : presence.RequiresRemoval ? "Уберите чип перед следующей записью"
             : presence.Current is null ? "Приложите чип к станции" : "Чип доступен для записи";

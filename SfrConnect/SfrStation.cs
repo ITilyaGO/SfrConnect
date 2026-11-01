@@ -110,13 +110,13 @@ public sealed partial class SfrStation : IDisposable
     }
 
     /// <summary>
-    /// Changes only cell 03, zeroing its last two bytes, and verifies the entire cell by reading back.
+    /// For participant cards, changes only cell 03 and verifies it. Service cards are cleared and converted.
     /// The caller does not need to know the current number.
     /// </summary>
     public SfrCardNumber WriteCardNumber(int newNumber) => WriteCardNumberCore(null, newNumber);
 
     /// <summary>
-    /// Changes only cell 03 after checking the current number and verifies the entire cell by reading back.
+    /// Checks the current number and verifies the update. Service cards are cleared and converted.
     /// Keep the same single card on the station. No retry or rollback is performed after a write attempt.
     /// </summary>
     public SfrCardNumber WriteCardNumber(int expectedCurrentNumber, int newNumber)
@@ -127,10 +127,10 @@ public sealed partial class SfrStation : IDisposable
     }
 
     internal SfrCardNumber WriteCardNumberCancellable(int expectedCurrentNumber, int newNumber,
-        CancellationToken cancellationToken) => WriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken);
+        CancellationToken cancellationToken) => WriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken, convertService: false);
 
     private SfrCardNumber WriteCardNumberCore(int? expectedCurrentNumber, int newNumber,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool convertService = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(newNumber);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newNumber, MaximumWritableCardNumber);
@@ -179,6 +179,11 @@ public sealed partial class SfrStation : IDisposable
             catch (SfrCardNotReadyException) when (!writeAttempted)
             {
                 throw;
+            }
+            catch (SfrProtectedCardException error) when (!writeAttempted && error.Kind == SfrCardKind.Service)
+            {
+                if (!convertService) throw new SfrCardNotReadyException("Тип чипа изменился перед записью. Повторите чтение.");
+                return ClearCardCore(newNumber, expectedCurrentNumber, cancellationToken);
             }
             catch (SfrProtectedCardException) when (!writeAttempted)
             {

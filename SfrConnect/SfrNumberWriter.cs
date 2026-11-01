@@ -34,7 +34,7 @@ public sealed class SfrNumberWriter
         IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false, bool clearCard = false)
         => RunAsync(number, cancellationToken, progress, waitForRemoval, clearCard);
 
-    /// <summary>Waits for a participant card and clears its recorded punches while preserving its number.</summary>
+    /// <summary>Clears punches and converts service cards. A service card without a valid number gets zero.</summary>
     public Task<SfrNumberAssignmentResult> ClearAsync(CancellationToken cancellationToken = default,
         IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false)
         => RunAsync(null, cancellationToken, progress, waitForRemoval, true);
@@ -81,21 +81,22 @@ public sealed class SfrNumberWriter
                 }
                 else if (card is not null)
                 {
-                    if (card.Kind != SfrCardKind.Participant)
+                    if (card.Kind == SfrCardKind.Unknown)
                         throw new SfrProtectedCardException(card.Kind, Convert.FromHexString(card.HeaderHex));
-                    progress?.Report(clearCard ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
-                    var verified = clearCard
+                    bool mustClear = clearCard || card.Kind == SfrCardKind.Service;
+                    progress?.Report(mustClear ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
+                    var verified = mustClear
                         ? station.ClearCardCore(number, card.Number, cancellationToken)
                         : station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
                     try
                     {
                         station.Beep();
-                        return new SfrNumberAssignmentResult(verified, true, null) { CardCleared = clearCard };
+                        return new SfrNumberAssignmentResult(verified, true, null) { CardCleared = mustClear };
                     }
                     catch (Exception error)
                     {
                         // A signal failure cannot turn a verified write into a failed write.
-                        return new SfrNumberAssignmentResult(verified, false, error.Message) { CardCleared = clearCard };
+                        return new SfrNumberAssignmentResult(verified, false, error.Message) { CardCleared = mustClear };
                     }
                 }
             }

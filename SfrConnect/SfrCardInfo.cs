@@ -12,7 +12,7 @@ public sealed class SfrProtectedCardException : IOException
 
     internal SfrProtectedCardException(SfrCardKind kind, byte[] header)
         : base(kind == SfrCardKind.Service
-            ? "Это служебный чип. Запись номера и очистка запрещены."
+            ? "Обнаружен служебный чип: требуется перевод в обычный режим."
             : "Неизвестный формат чипа. Запись номера и очистка запрещены.")
     {
         Kind = kind;
