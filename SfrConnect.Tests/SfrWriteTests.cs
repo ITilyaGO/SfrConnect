@@ -1,6 +1,6 @@
 namespace SfrConnect.Tests;
 
-public class SfrWriteTests
+public partial class SfrWriteTests
 {
     [Fact]
     public void CanWriteWithoutKnowingCurrentNumber()
@@ -258,12 +258,16 @@ public class SfrWriteTests
         private readonly Queue<byte[]> responses = new(responses);
         public List<byte[]> Writes { get; } = [];
         public bool FailWrite { get; init; }
+        public bool FailSignal { get; init; }
+        public Action<byte[]>? OnWrite { get; init; }
         public override int ReadTimeout { get; set; }
 
         public override void Write(byte[] buffer, int offset, int count)
         {
             var report = buffer.AsSpan(offset, count).ToArray();
             Writes.Add(report);
+            OnWrite?.Invoke(report);
+            if (FailSignal && report[3] == 3) throw new IOException("Signal unavailable.");
             if (FailWrite && report[3] == 2)
             {
                 throw new IOException("USB disconnected during write.");

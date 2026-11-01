@@ -15,6 +15,8 @@ public partial class MainWindow : Window
     private readonly CardPresence presence = new();
     private readonly Queue<string> logLines = new();
     private SfrStation? station;
+    private SfrNumberWriter? numberWriter;
+    private CancellationTokenSource? assignmentCancellation;
     private readonly StationOperations operations = new();
     private bool monitoring;
     private bool closing;
@@ -94,6 +96,7 @@ public partial class MainWindow : Window
             }
             if (DevicesBox.SelectedItem is not SfrDeviceInfo device) return;
             station = await Task.Run(() => SfrStation.Open(device.DevicePath, QueueLog));
+            numberWriter = new SfrNumberWriter(station);
             AppendLog($"Подключено: {device.DevicePath}");
             monitoring = true;
             ConnectionText.Text = "Подключено · чтение каждые 0,5 с";
@@ -109,6 +112,7 @@ public partial class MainWindow : Window
         presence.Invalidate();
         var oldStation = station;
         station = null;
+        numberWriter = null;
         if (oldStation is not null)
         {
             try { await Task.Run(oldStation.Dispose); }
@@ -152,17 +156,57 @@ public partial class MainWindow : Window
 
     private async void Write_Click(object sender, RoutedEventArgs e)
     {
-        if (!TryGetNewNumber(out var number) || !presence.CanWrite || !monitoring) return;
+        if (!TryGetNewNumber(out var number)) return;
         await RunOperationAsync(async () =>
         {
-            if (!presence.CanWrite || !monitoring) return;
-            var activeStation = station ?? throw new InvalidOperationException("Станция не подключена.");
-            presence.BeginWrite();
-            ShowResult($"Записываем {number} и проверяем результат. Не убирайте чип.");
-            var verified = await Task.Run(() => activeStation.WriteCardNumber(number));
-            presence.Observe(verified);
-            ShowResult($"Готово: номер {verified.Number} подтверждён чтением. Уберите чип перед следующей записью.");
+            var writer = numberWriter ?? throw new InvalidOperationException("Станция не подключена.");
+            using var cancellation = new CancellationTokenSource();
+            assignmentCancellation = cancellation;
+            var progress = new Progress<SfrAssignmentStage>(stage =>
+            {
+                if (!ReferenceEquals(assignmentCancellation, cancellation) || closing) return;
+                ShowResult(stage switch
+                {
+                    SfrAssignmentStage.WaitingForRemoval => $"Номер {number} ожидает записи. Уберите предыдущий чип, затем приложите следующий.",
+                    SfrAssignmentStage.WaitingForCard => $"Готов записать {number}. Приложите чип к станции.",
+                    _ => $"Записываем {number} и проверяем. Не убирайте чип."
+                });
+                CancelAssignmentButton.IsEnabled = stage != SfrAssignmentStage.Writing && !cancellation.IsCancellationRequested;
+            });
+            ShowResult($"Готов записать {number}. Приложите чип к станции.");
+            UpdateControls();
+            try
+            {
+                var result = await writer.AssignAsync(number, cancellation.Token, progress, presence.RequiresRemoval);
+                presence.Observe(result.Card);
+                presence.MarkWriteAttempt();
+                ShowResult(result.SignalSent
+                    ? $"Готово: номер {result.Card.Number} проверен, сигнал отправлен. Можно убрать чип."
+                    : $"Номер {result.Card.Number} проверен, но сигнал не отправлен: {result.SignalError}", !result.SignalSent);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                presence.Invalidate();
+                ShowResult("Ожидание отменено. Номер не записывался.");
+            }
+            catch (SfrWriteUnverifiedException)
+            {
+                presence.MarkWriteAttempt();
+                throw;
+            }
+            finally
+            {
+                assignmentCancellation = null;
+                UpdateControls();
+            }
         });
+    }
+
+    private void CancelAssignment_Click(object sender, RoutedEventArgs e)
+    {
+        assignmentCancellation?.Cancel();
+        CancelAssignmentButton.IsEnabled = false;
+        ShowResult("Отменяем ожидание. Если запись уже началась, дождёмся результата проверки.");
     }
 
     private bool TryGetNewNumber(out int number) => int.TryParse(NewNumberBox.Text.Trim(),
@@ -181,9 +225,11 @@ public partial class MainWindow : Window
         MonitorButton.Content = monitoring ? "Остановить чтение" : "Начать чтение";
         MonitorButton.IsEnabled = available && connected;
         BeepButton.IsEnabled = available && connected;
-        NewNumberBox.IsEnabled = !closing;
+        NewNumberBox.IsEnabled = !closing && assignmentCancellation is null;
         var valid = TryGetNewNumber(out _);
-        WriteButton.IsEnabled = available && connected && monitoring && presence.CanWrite && valid;
+        WriteButton.IsEnabled = available && connected && valid;
+        CancelAssignmentButton.Visibility = assignmentCancellation is null ? Visibility.Collapsed : Visibility.Visible;
+        CancelAssignmentButton.IsEnabled = assignmentCancellation is not null && !assignmentCancellation.IsCancellationRequested && !closing;
         ValidationText.Text = NewNumberBox.Text.Length > 0 && !valid ? "Введите целое число от 0 до 39999." : "";
         CardNumberText.Text = presence.Current?.Number.ToString(CultureInfo.InvariantCulture) ?? "—";
         CardHintText.Text = !connected ? "Подключите станцию" : !monitoring ? "Чтение остановлено"
@@ -236,6 +282,7 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (closing) return;
         closing = true;
+        assignmentCancellation?.Cancel();
         pollTimer.Stop();
         UpdateControls();
         await operations.Pending;

@@ -29,6 +29,11 @@ internal sealed class CardPresence
         {
             throw new InvalidOperationException("Приложите чип; после записи сначала уберите предыдущий.");
         }
+        MarkWriteAttempt();
+    }
+
+    public void MarkWriteAttempt()
+    {
         RequiresRemoval = true;
         absentSamples = 0;
     }

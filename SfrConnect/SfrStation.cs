@@ -130,7 +130,11 @@ public sealed class SfrStation : IDisposable
         return WriteCardNumberCore(expectedCurrentNumber, newNumber);
     }
 
-    private SfrCardNumber WriteCardNumberCore(int? expectedCurrentNumber, int newNumber)
+    internal SfrCardNumber WriteCardNumberCancellable(int expectedCurrentNumber, int newNumber,
+        CancellationToken cancellationToken) => WriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken);
+
+    private SfrCardNumber WriteCardNumberCore(int? expectedCurrentNumber, int newNumber,
+        CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(newNumber);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newNumber, MaximumWritableCardNumber);
@@ -138,11 +142,13 @@ public sealed class SfrStation : IDisposable
         lock (sync)
         {
             EnsureExchangeAvailable();
+            cancellationToken.ThrowIfCancellationRequested();
             var writeAttempted = false;
             try
             {
                 var snapshot = ReadSnapshot()
                     ?? throw new IOException("Чип не обнаружен или недоступен. Запись не отправлена.");
+                cancellationToken.ThrowIfCancellationRequested();
                 int currentNumber = SfrProtocol.DecodeCardNumber(snapshot.NumberCell);
                 if (expectedCurrentNumber.HasValue && currentNumber != expectedCurrentNumber.Value)
                 {
@@ -159,6 +165,7 @@ public sealed class SfrStation : IDisposable
                 var request = SfrProtocol.CreateNumberWriteReport(desiredCell);
                 log?.Invoke($"Запись номера: {currentNumber} → {newNumber}, только ячейка 03.");
                 log?.Invoke($"TX попытка ({request.Length} байт): {Convert.ToHexString(request)}");
+                cancellationToken.ThrowIfCancellationRequested();
                 writeAttempted = true;
                 stream.Write(request, 0, request.Length);
                 ReadWriteResponse();
@@ -172,6 +179,11 @@ public sealed class SfrStation : IDisposable
                 }
                 log?.Invoke($"Запись подтверждена повторным чтением: номер {newNumber}.");
                 return new SfrCardNumber(newNumber, Convert.ToHexString(verified.Marker));
+            }
+            catch (OperationCanceledException) when (!writeAttempted)
+            {
+                // The preceding read finished normally; cancellation did not touch card memory.
+                throw;
             }
             catch (Exception error)
             {

@@ -49,12 +49,13 @@
                         <TextBox x:Name="NewNumberBox" FontSize="22" Padding="8,3" MaxLength="8" TextChanged="Number_TextChanged" />
                     </DockPanel>
                     <TextBlock x:Name="ValidationText" FontSize="12" Foreground="#9A3412" Margin="0,5,0,0" />
-                    <TextBlock Text="Держите один чип на станции до завершения проверки." TextWrapping="Wrap" Foreground="#526174" Margin="0,8,0,0" />
+                    <Button x:Name="CancelAssignmentButton" Content="Отменить ожидание" Click="CancelAssignment_Click" Visibility="Collapsed" Margin="0,8,0,0" />
+                    <TextBlock Text="Нажмите «Записать», затем приложите чип. Дождитесь подтверждения и сигнала." TextWrapping="Wrap" Foreground="#526174" Margin="0,8,0,0" />
                 </StackPanel>
             </Grid>
         </Border>
         <Border Grid.Row="3" Background="#E8EEF7" CornerRadius="8" Padding="14" Margin="0,0,0,14">
-            <TextBlock x:Name="ResultText" Text="Запись выполняется только по кнопке «Записать»." TextWrapping="Wrap" />
+            <TextBlock x:Name="ResultText" Text="Введите номер и нажмите «Записать» — станция будет ждать чип." TextWrapping="Wrap" />
         </Border>
         <Grid Grid.Row="4">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
