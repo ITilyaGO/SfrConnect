@@ -5,16 +5,12 @@ internal static class SfrProtocol
     internal const byte ReportId = 0x3F;
     internal const int ReportLength = 64;
 
-    internal static byte[] EncodeCardNumber(int number, ReadOnlySpan<byte> previousCell)
+    internal static byte[] EncodeCardNumber(int number)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(number);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(number, SfrStation.MaximumWritableCardNumber);
-        if (previousCell.Length != 4)
-        {
-            throw new ArgumentException("Ячейка номера должна содержать четыре байта.", nameof(previousCell));
-        }
-        // SFR basic writes two base-200 digits. Preserve the unrelated fourth byte.
-        return [(byte)(number % 200), (byte)(number / 200), 0, previousCell[3]];
+        // Match SFR basic and SFR phone: two base-200 digits followed by two zero bytes.
+        return [(byte)(number % 200), (byte)(number / 200), 0, 0];
     }
 
     internal static byte[] CreateNumberWriteReport(ReadOnlySpan<byte> cell)

@@ -114,6 +114,12 @@ public sealed class SfrStation : IDisposable
     }
 
     /// <summary>
+    /// Changes only cell 03, zeroing its last two bytes, and verifies the entire cell by reading back.
+    /// The caller does not need to know the current number.
+    /// </summary>
+    public SfrCardNumber WriteCardNumber(int newNumber) => WriteCardNumberCore(null, newNumber);
+
+    /// <summary>
     /// Changes only cell 03 after checking the current number and verifies the entire cell by reading back.
     /// Keep the same single card on the station. No retry or rollback is performed after a write attempt.
     /// </summary>
@@ -121,6 +127,11 @@ public sealed class SfrStation : IDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegative(expectedCurrentNumber);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(expectedCurrentNumber, 7999999);
+        return WriteCardNumberCore(expectedCurrentNumber, newNumber);
+    }
+
+    private SfrCardNumber WriteCardNumberCore(int? expectedCurrentNumber, int newNumber)
+    {
         ArgumentOutOfRangeException.ThrowIfNegative(newNumber);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newNumber, MaximumWritableCardNumber);
 
@@ -133,18 +144,18 @@ public sealed class SfrStation : IDisposable
                 var snapshot = ReadSnapshot()
                     ?? throw new IOException("Чип не обнаружен или недоступен. Запись не отправлена.");
                 int currentNumber = SfrProtocol.DecodeCardNumber(snapshot.NumberCell);
-                if (currentNumber != expectedCurrentNumber)
+                if (expectedCurrentNumber.HasValue && currentNumber != expectedCurrentNumber.Value)
                 {
                     throw new InvalidOperationException(
                         $"Ожидался номер {expectedCurrentNumber}, прочитан {currentNumber}. Запись не отправлена.");
                 }
-                if (currentNumber == newNumber)
+                byte[] desiredCell = SfrProtocol.EncodeCardNumber(newNumber);
+                if (snapshot.NumberCell.AsSpan().SequenceEqual(desiredCell))
                 {
                     log?.Invoke($"Номер уже равен {newNumber}. Запись не требуется.");
                     return new SfrCardNumber(currentNumber, Convert.ToHexString(snapshot.Marker));
                 }
 
-                byte[] desiredCell = SfrProtocol.EncodeCardNumber(newNumber, snapshot.NumberCell);
                 var request = SfrProtocol.CreateNumberWriteReport(desiredCell);
                 log?.Invoke($"Запись номера: {currentNumber} → {newNumber}, только ячейка 03.");
                 log?.Invoke($"TX попытка ({request.Length} байт): {Convert.ToHexString(request)}");

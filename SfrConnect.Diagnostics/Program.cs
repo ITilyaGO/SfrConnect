@@ -40,16 +40,29 @@ static int Execute(string[] command)
 
         var listAll = verb == "list" && command.Length == 2 && command[1] == "--all";
         int? deviceNumber = null;
-        int expectedNumber = 0, newNumber = 0;
+        int? expectedNumber = null;
+        int newNumber = 0;
         if (verb == "write")
         {
-            if (command.Length is < 3 or > 4 ||
-                !int.TryParse(command[1], NumberStyles.None, CultureInfo.InvariantCulture, out expectedNumber) ||
-                expectedNumber > 7999999 ||
-                !int.TryParse(command[2], NumberStyles.None, CultureInfo.InvariantCulture, out newNumber) ||
+            if (command.Length is < 2 or > 4)
+            {
+                throw new ArgumentException("Формат: write <новый номер> или write <текущий номер> <новый номер> [номер устройства].");
+            }
+            int newNumberIndex = 1;
+            if (command.Length >= 3)
+            {
+                if (!int.TryParse(command[1], NumberStyles.None, CultureInfo.InvariantCulture, out var current) ||
+                    current > 7999999)
+                {
+                    throw new ArgumentException("Ожидаемый текущий номер должен быть от 0 до 7999999.");
+                }
+                expectedNumber = current;
+                newNumberIndex = 2;
+            }
+            if (!int.TryParse(command[newNumberIndex], NumberStyles.None, CultureInfo.InvariantCulture, out newNumber) ||
                 newNumber > SfrStation.MaximumWritableCardNumber)
             {
-                throw new ArgumentException("Формат: write <текущий номер> <новый номер 0–39999> [номер устройства].");
+                throw new ArgumentException("Новый номер должен быть от 0 до 39999.");
             }
             if (command.Length == 4)
             {
@@ -126,7 +139,9 @@ static int Execute(string[] command)
             }
             else if (verb == "write")
             {
-                var card = station.WriteCardNumber(expectedNumber, newNumber);
+                var card = expectedNumber.HasValue
+                    ? station.WriteCardNumber(expectedNumber.Value, newNumber)
+                    : station.WriteCardNumber(newNumber);
                 Console.WriteLine($"Номер проверен чтением: {card.Number}.");
             }
         }
@@ -167,13 +182,15 @@ static void PrintHelp()
         open [номер]  — открыть и закрыть станцию, без отправки команд
         beep [номер]  — открыть станцию, отправить один сигнал, закрыть
         read [номер]  — прочитать номер приложенного чипа, без записи
-        write <текущий> <новый> [номер устройства] — изменить номер чипа (0–39999)
+        write <новый> — записать номер 0–39999, текущий номер знать не нужно
+        write <текущий> <новый> [номер устройства] — запись с проверкой старого номера
         help          — показать команды
         exit          — завершить интерактивную проверку
         Номер берётся из списка SFR команды list, не из list --all.
         Без номера устройства команды работают только при одном найденном интерфейсе.
         Чип для проверки сигнала не нужен.
         Для read/write держите один чип на станции до окончания команды.
-        Пример: write 2 3 — заменить номер 2 на 3, без очистки отметок.
+        Пример: write 123 — записать номер 123 без очистки отметок.
+        Короткая команда write <новый> требует одного подключённого интерфейса SFR.
         """);
 }

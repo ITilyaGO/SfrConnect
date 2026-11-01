@@ -3,7 +3,64 @@ namespace SfrConnect.Tests;
 public class SfrWriteTests
 {
     [Fact]
-    public void ChangesOnlyNumberCellPreservesFourthByteAndVerifiesReadback()
+    public void CanWriteWithoutKnowingCurrentNumber()
+    {
+        using var transport = Exchange(585, 123, reservedByte: 0xA5);
+        using var station = new SfrStation(transport);
+        Assert.Equal(123, station.WriteCardNumber(123).Number);
+        var write = Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Equal(new byte[] { 123, 0, 0, 0 }, write[5..9]);
+    }
+
+    [Fact]
+    public void AutomaticCurrentNumberStillRequiresVerifiedReadback()
+    {
+        using var transport = Exchange(585, 585);
+        using var station = new SfrStation(transport);
+        Assert.Throws<SfrWriteUnverifiedException>(() => station.WriteCardNumber(123));
+    }
+
+    [Fact]
+    public void AutomaticCurrentNumberDoesNotRewriteMatchingNumber()
+    {
+        using var transport = new ScriptedStream(Snapshot(123));
+        using var station = new SfrStation(transport);
+        Assert.Equal(123, station.WriteCardNumber(123).Number);
+        Assert.DoesNotContain(transport.Writes, report => report[3] == 2);
+    }
+
+    [Fact]
+    public void MatchingNumberStillClearsNonzeroFourthByte()
+    {
+        using var transport = Exchange(123, 123, reservedByte: 0xA5);
+        using var station = new SfrStation(transport);
+        Assert.Equal(123, station.WriteCardNumber(123).Number);
+        var write = Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Equal(new byte[] { 123, 0, 0, 0 }, write[5..9]);
+    }
+
+    [Fact]
+    public void MatchingNumberWithUnclearedFourthByteFailsReadback()
+    {
+        using var transport = new ScriptedStream(Snapshot(123, 0xA5)
+            .Concat(new[] { WriteAcknowledgement() }).Concat(Snapshot(123, 0xA5)).ToArray());
+        using var station = new SfrStation(transport);
+        Assert.Throws<SfrWriteUnverifiedException>(() => station.WriteCardNumber(123));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(40000)]
+    public void ShortOverloadValidatesNumberBeforeUsbAccess(int number)
+    {
+        using var transport = new ScriptedStream();
+        using var station = new SfrStation(transport);
+        Assert.Throws<ArgumentOutOfRangeException>(() => station.WriteCardNumber(number));
+        Assert.Empty(transport.Writes);
+    }
+
+    [Fact]
+    public void ChangesOnlyNumberCellZerosFourthByteAndVerifiesReadback()
     {
         var log = new List<string>();
         using var transport = Exchange(2, 3, reservedByte: 0xA5);
@@ -13,7 +70,7 @@ public class SfrWriteTests
 
         Assert.Equal(new SfrCardNumber(3, "00195503"), card);
         var write = Assert.Single(transport.Writes, report => report[3] == 2);
-        Assert.Equal(Convert.FromHexString("3F09FD0203030000A5ADFE"), write[..11]);
+        Assert.Equal(Convert.FromHexString("3F09FD02030300000008FE"), write[..11]);
         Assert.Equal(64, write.Length);
         Assert.All(write[11..], value => Assert.Equal(0, value));
         Assert.Equal(new byte[] { 1, 3, 1, 3, 1, 3, 1 }, transport.Writes.Select(report => report[4]).ToArray());
@@ -25,10 +82,10 @@ public class SfrWriteTests
     [InlineData(199, 199, 0)]
     [InlineData(200, 0, 1)]
     [InlineData(39999, 199, 199)]
-    public void EncodesManufacturerNumberRangeAndPreservesExtraByte(int number, byte low, byte high)
+    public void EncodesManufacturerNumberRangeWithTwoTrailingZeros(int number, byte low, byte high)
     {
-        Assert.Equal(new byte[] { low, high, 0, 0xAB },
-            SfrProtocol.EncodeCardNumber(number, [2, 0, 0, 0xAB]));
+        Assert.Equal(new byte[] { low, high, 0, 0 },
+            SfrProtocol.EncodeCardNumber(number));
     }
 
     [Fact]
@@ -175,7 +232,7 @@ public class SfrWriteTests
         "3F05FD2A5500FE000000FE06F5D2CE9B71EDAEEF2A7AFD7DF9BF0BB17BFFDA771B2CA83D7325ACEFBBEA9FF3A3D7F7B7715BEB67D7D2AB2D6D57F061BFE5675B");
     private static ScriptedStream Exchange(int oldNumber, int readbackNumber, byte reservedByte = 0) =>
         new(Snapshot(oldNumber, reservedByte).Concat(new[] { WriteAcknowledgement() })
-            .Concat(Snapshot(readbackNumber, reservedByte)).ToArray());
+            .Concat(Snapshot(readbackNumber)).ToArray());
 
     private static byte[][] Snapshot(int number, byte reservedByte = 0) =>
         [Marker(), Number(number, reservedByte), Marker()];
