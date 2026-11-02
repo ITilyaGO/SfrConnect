@@ -52,8 +52,12 @@ public sealed class SfrNumberWriter
             throw new InvalidOperationException("Команда записи уже выполняется.");
         try
         {
-            return await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval, clearCard))
+            using var total = station.MeasureStage(number.HasValue
+                ? $"ВСЯ КОМАНДА: записать {number}{(clearCard ? " с очисткой" : "")}" : "ВСЯ КОМАНДА: очистить чип");
+            var result = await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval, clearCard))
                 .ConfigureAwait(false);
+            total.Finish();
+            return result;
         }
         finally { Volatile.Write(ref running, 0); }
     }
@@ -61,6 +65,7 @@ public sealed class SfrNumberWriter
     private SfrNumberAssignmentResult AssignCore(int? number, CancellationToken cancellationToken,
         IProgress<SfrAssignmentStage>? progress, bool waitForRemoval, bool clearCard)
     {
+        using var timing = station.MeasureStage(waitForRemoval ? "Ожидание снятия предыдущего чипа" : "Ожидание и обнаружение чипа");
         progress?.Report(waitForRemoval ? SfrAssignmentStage.WaitingForRemoval : SfrAssignmentStage.WaitingForCard);
         var absentSamples = 0;
         while (true)
@@ -76,6 +81,7 @@ public sealed class SfrNumberWriter
                     if (absentSamples >= 2)
                     {
                         waitForRemoval = false;
+                        timing.Next("Ожидание и обнаружение чипа");
                         progress?.Report(SfrAssignmentStage.WaitingForCard);
                     }
                 }
@@ -84,13 +90,17 @@ public sealed class SfrNumberWriter
                     if (card.Kind == SfrCardKind.Unknown)
                         throw new SfrProtectedCardException(card.Kind, Convert.FromHexString(card.HeaderHex));
                     bool mustClear = clearCard || card.Kind == SfrCardKind.Service;
+                    timing.Finish();
+                    if (!mustClear) timing.Next("Запись номера и проверка");
                     progress?.Report(mustClear ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
                     var verified = mustClear
                         ? station.ClearCardCore(number, card.Number, cancellationToken)
                         : station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
                     try
                     {
+                        timing.Next("Сигнал и пауза станции 300 мс");
                         station.Beep();
+                        timing.Finish();
                         return new SfrNumberAssignmentResult(verified, true, null) { CardCleared = mustClear };
                     }
                     catch (Exception error)
@@ -104,6 +114,8 @@ public sealed class SfrNumberWriter
             {
                 // Only completed reads before any write attempt are safe to repeat.
                 absentSamples = 0;
+                timing.Finish(success: false);
+                timing.Next(waitForRemoval ? "Ожидание снятия предыдущего чипа" : "Ожидание и обнаружение чипа");
                 progress?.Report(waitForRemoval ? SfrAssignmentStage.WaitingForRemoval : SfrAssignmentStage.WaitingForCard);
             }
             if (cancellationToken.WaitHandle.WaitOne(250)) cancellationToken.ThrowIfCancellationRequested();

@@ -15,6 +15,8 @@ public sealed partial class SfrStation : IDisposable
     private bool disposed;
     private bool exchangeFaulted;
 
+    internal SfrStageTimer MeasureStage(string name) => new(log, name);
+
     internal SfrStation(Stream stream, Action<string>? log = null)
     {
         this.stream = stream;

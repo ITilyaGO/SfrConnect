@@ -14,6 +14,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer pollTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly CardPresence presence = new();
     private readonly ExchangeLog exchangeLog = new();
+    private readonly ExchangeLog timingLog = new();
+    private TimingWindow? timingWindow;
     private readonly DispatcherTimer logTimer = new(DispatcherPriority.Background)
         { Interval = TimeSpan.FromMilliseconds(250) };
     private SfrStation? station;
@@ -307,17 +309,33 @@ public partial class MainWindow : Window
 
     private void QueueLog(string message)
     {
-        exchangeLog.Add(message, DateTime.Now);
+        var timestamp = DateTime.Now;
+        exchangeLog.Add(message, timestamp);
+        if (message.StartsWith("ЭТАП · ", StringComparison.Ordinal)) timingLog.Add(message, timestamp);
     }
 
     private void AppendLog(string message) => QueueLog(message);
 
     private void FlushLog()
     {
+        if (timingWindow is not null && timingLog.TakeUpdate() is string timingText)
+            timingWindow.SetLog(timingText);
         var text = exchangeLog.TakeUpdate();
         if (text is null) return;
         LogBox.Text = text;
         LogBox.ScrollToEnd();
+    }
+
+    private void Timing_Click(object sender, RoutedEventArgs e)
+    {
+        if (timingWindow is null)
+        {
+            timingWindow = new TimingWindow(timingLog.Snapshot) { Owner = this };
+            timingWindow.Closed += (_, _) => timingWindow = null;
+            timingWindow.Show();
+        }
+        if (timingWindow.WindowState == WindowState.Minimized) timingWindow.WindowState = WindowState.Normal;
+        timingWindow.Activate();
     }
 
     private void SaveLog_Click(object sender, RoutedEventArgs e)

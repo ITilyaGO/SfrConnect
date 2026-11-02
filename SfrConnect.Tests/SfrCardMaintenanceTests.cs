@@ -147,7 +147,8 @@ public class SfrCardMaintenanceTests
     public async Task AssignmentWithClearReturnsVerifiedNumberAndClearedFlag()
     {
         using var transport = new CardMemory();
-        using var station = new SfrStation(transport);
+        var logs = new List<string>();
+        using var station = new SfrStation(transport, logs.Add);
         var result = await new SfrNumberWriter(station).AssignAsync(123, clearCard: true);
         Assert.Equal(123, result.Card.Number);
         Assert.True(result.CardCleared);
@@ -155,6 +156,17 @@ public class SfrCardMaintenanceTests
         Assert.Equal(new byte[] { 123, 0, 0, 0 }, transport.Cells[3]);
         Assert.All(transport.Cells.Skip(5), cell => Assert.Equal(new byte[4], cell));
         Assert.Equal(3, transport.Requests[^1][3]);
+        var completed = logs.Where(m => m.StartsWith("ЭТАП · ") && m.Contains(" · готово · ")).ToArray();
+        Assert.Equal(8, completed.Length);
+        Assert.Contains("Ожидание и обнаружение чипа", completed[0]);
+        Assert.Contains("определение типа и номера", completed[1]);
+        Assert.Contains("чтение памяти", completed[2]);
+        Assert.Contains("запись", completed[3]);
+        Assert.Contains("итоговая проверка памяти", completed[4]);
+        Assert.Contains("завершающая проверка", completed[5]);
+        Assert.Contains("Сигнал", completed[6]);
+        Assert.Contains("ВСЯ КОМАНДА", completed[7]);
+        Assert.DoesNotContain(logs, m => m.Contains("прервано"));
     }
 
     [Fact]
@@ -214,7 +226,8 @@ public class SfrCardMaintenanceTests
     public async Task LostAckAfterFirstMutationReportsPartialOperationWithoutRetry()
     {
         using var transport = new CardMemory { LoseWriteAck = true };
-        using var station = new SfrStation(transport);
+        var logs = new List<string>();
+        using var station = new SfrStation(transport, logs.Add);
         var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() =>
             new SfrNumberWriter(station).AssignAsync(3, clearCard: true));
         Assert.Equal(3, error.RequestedNumber);
@@ -222,6 +235,9 @@ public class SfrCardMaintenanceTests
         Assert.Single(transport.Mutations);
         Assert.DoesNotContain(transport.Requests, request => request[3] == 3);
         Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
+        Assert.Contains(logs, m => m.Contains("Очистка: запись") && m.Contains("прервано"));
+        Assert.Contains(logs, m => m.Contains("ВСЯ КОМАНДА") && m.Contains("прервано"));
+        Assert.DoesNotContain(logs, m => m.Contains("ВСЯ КОМАНДА") && m.Contains("готово"));
     }
 
     [Fact]

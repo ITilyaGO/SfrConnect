@@ -1,0 +1,22 @@
+<Window x:Class="SfrConnect.TestApp.TimingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SFR — время этапов" Width="1000" Height="550" MinWidth="650" MinHeight="350"
+        Background="#F4F6F9" FontFamily="Segoe UI" FontSize="14">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,12">
+            <Button DockPanel.Dock="Right" Content="Сохранить этапы" Click="Save_Click" Padding="12,6" />
+            <TextBlock Text="Время выполнения этапов" FontSize="22" FontWeight="SemiBold" />
+        </DockPanel>
+        <TextBlock Grid.Row="1" Margin="0,0,0,12" TextWrapping="Wrap" Foreground="#526174"
+                   Text="Здесь появятся этапы записи и очистки. «ВСЯ КОМАНДА» включает ожидание чипа и сигнал. Длительность — в миллисекундах и секундах. Прерванные этапы отмечаются отдельно. Сохраняются последние 500 сообщений." />
+        <TextBox x:Name="TimingText" Grid.Row="2" IsReadOnly="True" IsUndoEnabled="False"
+                 FontFamily="Consolas" FontSize="13" TextWrapping="NoWrap" Padding="10"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+    </Grid>
+</Window>

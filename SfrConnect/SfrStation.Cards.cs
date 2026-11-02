@@ -47,6 +47,7 @@ public sealed partial class SfrStation
             cancellationToken.ThrowIfCancellationRequested();
             bool attempted = false;
             byte lastCell = 0;
+            using var timing = MeasureStage("Очистка: определение типа и номера");
             try
             {
                 var marker = ReadCell(1) ?? throw new SfrCardNotReadyException("Чип недоступен. Очистка не началась.");
@@ -68,6 +69,7 @@ public sealed partial class SfrStation
                 var plan = new List<(byte Cell, byte[] Data)>();
                 // Neutralize the service mode first, before removing its command data.
                 if (service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
+                timing.Next("Очистка: чтение памяти и подготовка");
                 for (int cell = 2; cell <= 127; cell++)
                 {
                     if (cell is 3 or 4) continue;
@@ -94,6 +96,7 @@ public sealed partial class SfrStation
                     throw new SfrCardNotReadyException("Счётчик изменился перед очисткой.");
 
                 var expectedHeader = header;
+                timing.Next($"Очистка: запись {plan.Count} ячеек с проверками перед записью");
                 foreach (var item in plan)
                 {
                     // Cancellation after the first attempted mutation must not hide a partial operation.
@@ -122,6 +125,7 @@ public sealed partial class SfrStation
                 }
                 // One final pass covers both changed cells and the previously empty tail.
                 // Bracket this read-only pass instead of reading the marker before every cell.
+                timing.Next("Очистка: итоговая проверка памяти 02–7F");
                 CheckMarker(newMarker);
                 byte[] empty = new byte[4];
                 for (int cell = 2; cell <= 127; cell++)
@@ -131,10 +135,12 @@ public sealed partial class SfrStation
                     if (readback is null || !readback.AsSpan().SequenceEqual(expected))
                         throw new InvalidDataException($"Итоговая проверка ячейки {cell:X2} не пройдена.");
                 }
+                timing.Next("Очистка: завершающая проверка номера и типа");
                 var verified = ReadSnapshot(participantOnly: true)
                     ?? throw new IOException("Чип убран после очистки.");
                 if (!verified.Marker.AsSpan().SequenceEqual(newMarker) || !verified.NumberCell.AsSpan().SequenceEqual(desiredNumber))
                     throw new InvalidDataException("Итоговая проверка номера после очистки не пройдена.");
+                timing.Finish();
                 return new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker));
             }
             catch (SfrCardNotReadyException) when (!attempted) { throw; }
