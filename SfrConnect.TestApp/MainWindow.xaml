@@ -65,7 +65,7 @@
                 <Button Content="Сохранить журнал" DockPanel.Dock="Right" Click="SaveLog_Click" Margin="0" />
                 <TextBlock Text="Журнал обмена" FontWeight="SemiBold" VerticalAlignment="Center" />
             </DockPanel>
-            <TextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+            <TextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" IsUndoEnabled="False" FontFamily="Consolas" FontSize="12"
                      TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                      Padding="8" AutomationProperties.Name="Журнал обмена" />
         </Grid>

@@ -7,6 +7,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\SfrConnect.TestApp\ExchangeLog.cs" Link="ExchangeLog.cs" />
     <Compile Include="..\SfrConnect.TestApp\CardPresence.cs" Link="CardPresence.cs" />
     <Compile Include="..\SfrConnect.TestApp\StationOperations.cs" Link="StationOperations.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />

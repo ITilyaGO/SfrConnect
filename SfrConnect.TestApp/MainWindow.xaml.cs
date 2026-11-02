@@ -13,7 +13,9 @@ public partial class MainWindow : Window
 {
     private readonly DispatcherTimer pollTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly CardPresence presence = new();
-    private readonly Queue<string> logLines = new();
+    private readonly ExchangeLog exchangeLog = new();
+    private readonly DispatcherTimer logTimer = new(DispatcherPriority.Background)
+        { Interval = TimeSpan.FromMilliseconds(250) };
     private SfrStation? station;
     private SfrNumberWriter? numberWriter;
     private SfrCardInfo? cardInfo;
@@ -26,6 +28,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        logTimer.Tick += (_, _) => FlushLog();
+        logTimer.Start();
         operations.Changed += UpdateControls;
         pollTimer.Tick += async (_, _) =>
         {
@@ -303,17 +307,16 @@ public partial class MainWindow : Window
 
     private void QueueLog(string message)
     {
-        var timestamp = DateTime.Now;
-        // Never block the USB worker on the dispatcher while the window is closing.
-        if (!Dispatcher.HasShutdownStarted)
-            Dispatcher.BeginInvoke(new Action(() => AppendLog(message, timestamp)));
+        exchangeLog.Add(message, DateTime.Now);
     }
 
-    private void AppendLog(string message, DateTime? timestamp = null)
+    private void AppendLog(string message) => QueueLog(message);
+
+    private void FlushLog()
     {
-        logLines.Enqueue($"[{timestamp ?? DateTime.Now:HH:mm:ss.fff}] {message}");
-        while (logLines.Count > 500) logLines.Dequeue();
-        LogBox.Text = string.Join(Environment.NewLine, logLines);
+        var text = exchangeLog.TakeUpdate();
+        if (text is null) return;
+        LogBox.Text = text;
         LogBox.ScrollToEnd();
     }
 
@@ -321,7 +324,7 @@ public partial class MainWindow : Window
     {
         var dialog = new SaveFileDialog { Filter = "Текстовый журнал (*.txt)|*.txt", FileName = $"sfr-{DateTime.Now:yyyyMMdd-HHmmss}.txt" };
         if (dialog.ShowDialog(this) != true) return;
-        try { File.WriteAllText(dialog.FileName, LogBox.Text); }
+        try { File.WriteAllText(dialog.FileName, exchangeLog.Snapshot()); }
         catch (Exception error) { ShowResult($"Не удалось сохранить журнал: {error.Message}", true); }
     }
 
@@ -336,6 +339,7 @@ public partial class MainWindow : Window
         UpdateControls();
         await operations.Pending;
         await DisconnectAsync();
+        logTimer.Stop();
         allowClose = true;
         Close();
     }
