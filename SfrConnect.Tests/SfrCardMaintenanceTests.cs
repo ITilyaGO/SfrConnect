@@ -3,6 +3,84 @@ namespace SfrConnect.Tests;
 public class SfrCardMaintenanceTests
 {
     [Theory]
+    [InlineData("empty", 264, 1)]
+    [InlineData("sparse", 280, 6)]
+    [InlineData("full", 640, 126)]
+    public void ClearUsesFewerUsbExchangesAndVerifiesEveryDataCell(string layout, int requestBudget, int writes)
+    {
+        using var transport = new CardMemory();
+        if (layout == "empty")
+        {
+            transport.Cells[2] = new byte[4];
+            transport.Cells[4] = [5, 0, 0, 0];
+            foreach (var cell in transport.Cells.Skip(5)) Array.Clear(cell);
+        }
+        else if (layout == "sparse") transport.Cells[126] = [31, 1, 2, 3];
+        else foreach (var cell in transport.Cells.Skip(5)) cell[0] = 31;
+        using var station = new SfrStation(transport);
+
+        station.ClearCard();
+
+        Assert.InRange(transport.Requests.Count, 1, requestBudget);
+        Assert.Equal(writes, transport.Mutations.Count);
+        var finalReads = transport.Requests.Skip(transport.Requests.FindLastIndex(r => r[3] == 2) + 1);
+        for (int cell = 2; cell <= 127; cell++)
+            Assert.Contains(finalReads, r => r[3] == 1 && r[4] == cell);
+        Assert.All(transport.Cells.Skip(5), cell => Assert.Equal(new byte[4], cell));
+    }
+
+    [Fact]
+    public async Task AcknowledgedButUnchangedPunchPreventsSuccessSignal()
+    {
+        using var transport = new CardMemory { IgnoreWriteCell = 5 };
+        using var station = new SfrStation(transport);
+        await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+        Assert.Equal(241, transport.Cells[5][0]);
+    }
+
+    [Fact]
+    public void FailedServiceHeaderVerificationStopsBeforeErasingCommands()
+    {
+        using var transport = new CardMemory { IgnoreWriteCell = 4 };
+        transport.Cells[4] = [0, 1, 0, 0];
+        using var station = new SfrStation(transport);
+        Assert.Throws<SfrCardUpdateUnverifiedException>(() => station.ClearCard());
+        Assert.Equal(4, Assert.Single(transport.Mutations)[4]);
+        Assert.Equal(241, transport.Cells[5][0]);
+    }
+
+    [Fact]
+    public async Task CardChangedDuringFinalReadOnlyPassPreventsSuccessSignal()
+    {
+        using var transport = new CardMemory
+        {
+            OnRequest = (memory, request) =>
+            {
+                if (memory.Mutations.Count > 0 && request[3] == 1 && request[4] == 100)
+                    memory.Cells[1][0] ^= 1;
+            }
+        };
+        using var station = new SfrStation(transport);
+        await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+    }
+
+    [Fact]
+    public void PreviouslyVerifiedWriteCorruptedLaterIsDetectedByFinalPass()
+    {
+        using var transport = new CardMemory
+        {
+            OnRequest = (memory, request) =>
+            {
+                if (request[3] == 2 && request[4] == 1) memory.Cells[2] = [1, 2, 3, 4];
+            }
+        };
+        using var station = new SfrStation(transport);
+        Assert.Throws<SfrCardUpdateUnverifiedException>(() => station.ClearCard());
+    }
+
+    [Theory]
     [InlineData("00010000", SfrCardKind.Service)]
     [InlineData("01020000", SfrCardKind.Service)]
     [InlineData("02020000", SfrCardKind.Service)]
@@ -282,6 +360,7 @@ public class SfrCardMaintenanceTests
         public List<byte[]> Mutations { get; } = [];
         public Action<CardMemory, byte[]>? OnRequest { get; init; }
         public bool LoseWriteAck { get; init; }
+        public byte? IgnoreWriteCell { get; init; }
         public override int ReadTimeout { get; set; }
 
         public CardMemory(int count = 128)
@@ -309,7 +388,7 @@ public class SfrCardMaintenanceTests
             else if (request[3] == 2)
             {
                 Mutations.Add(request);
-                Cells[address] = request[5..9];
+                if (address != IgnoreWriteCell) Cells[address] = request[5..9];
                 if (!LoseWriteAck) replies.Enqueue(Frame(0x2A, 0x55));
             }
         }

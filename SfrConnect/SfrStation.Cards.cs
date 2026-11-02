@@ -68,7 +68,6 @@ public sealed partial class SfrStation
                 var plan = new List<(byte Cell, byte[] Data)>();
                 // Neutralize the service mode first, before removing its command data.
                 if (service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
-                int lastNonzero = 5;
                 for (int cell = 2; cell <= 127; cell++)
                 {
                     if (cell is 3 or 4) continue;
@@ -79,15 +78,14 @@ public sealed partial class SfrStation
                         CheckMarker(snapshot.Marker);
                         throw new NotSupportedException($"Ячейка {cell:X2} недоступна. Очистка требует формата на 128 ячеек.");
                     }
-                    if (cell >= 5 && data.Any(value => value != 0)) lastNonzero = cell;
+                    // Already empty cells need verification, but no additional write cycle.
+                    if (data.Any(value => value != 0)) plan.Add(((byte)cell, new byte[4]));
                 }
-                // Like SFR phone registration, clear through the last nonzero punch, including stale records.
-                plan.Add((2, new byte[4]));
-                for (int cell = 5; cell <= lastNonzero; cell++) plan.Add(((byte)cell, new byte[4]));
                 int resultNumber = newNumber ?? (service && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
                 byte[] desiredNumber = newNumber.HasValue || service ? SfrProtocol.EncodeCardNumber(resultNumber) : snapshot.NumberCell;
-                if (newNumber.HasValue || service) plan.Add((3, desiredNumber));
-                if (!service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
+                if (!desiredNumber.AsSpan().SequenceEqual(numberCell)) plan.Add((3, desiredNumber));
+                byte[] clearedHeader = [5, 0, 0, 0];
+                if (!service && !header.AsSpan().SequenceEqual(clearedHeader)) plan.Add((4, clearedHeader));
                 var newMarker = Convert.FromHexString("00" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
                 plan.Add((1, newMarker));
                 CheckMarker(snapshot.Marker);
@@ -112,25 +110,26 @@ public sealed partial class SfrStation
                     attempted = true;
                     stream.Write(report, 0, report.Length);
                     ReadWriteResponse();
-                    var readback = ReadCell(item.Cell);
-                    if (readback is null || !readback.AsSpan().SequenceEqual(item.Data))
-                        throw new InvalidDataException($"Не подтверждена ячейка {item.Cell:X2} после очистки.");
-                    if (item.Cell == 4) expectedHeader = item.Data;
+                    // Confirm a mode change immediately, especially before erasing service commands.
+                    // All other data is checked together in the final memory pass.
+                    if (item.Cell == 4)
+                    {
+                        var readback = ReadCell(4);
+                        if (readback is null || !readback.AsSpan().SequenceEqual(item.Data))
+                            throw new InvalidDataException("Не подтверждён сброс заголовка после очистки.");
+                        expectedHeader = item.Data;
+                    }
                 }
-                for (int cell = lastNonzero + 1; cell <= 127; cell++)
+                // One final pass covers both changed cells and the previously empty tail.
+                // Bracket this read-only pass instead of reading the marker before every cell.
+                CheckMarker(newMarker);
+                byte[] empty = new byte[4];
+                for (int cell = 2; cell <= 127; cell++)
                 {
-                    CheckMarker(newMarker);
-                    var tail = ReadCell((byte)cell);
-                    if (tail is null || tail.Any(value => value != 0))
-                        throw new InvalidDataException($"Отметки в ячейке {cell:X2} не очищены.");
-                }
-                // Re-read all changed cells at the end, so per-cell success is not mistaken for final success.
-                foreach (var item in plan)
-                {
-                    CheckMarker(newMarker);
-                    var readback = ReadCell(item.Cell);
-                    if (readback is null || !readback.AsSpan().SequenceEqual(item.Data))
-                        throw new InvalidDataException($"Итоговая проверка ячейки {item.Cell:X2} не пройдена.");
+                    var expected = cell == 3 ? desiredNumber : cell == 4 ? clearedHeader : empty;
+                    var readback = ReadCell((byte)cell);
+                    if (readback is null || !readback.AsSpan().SequenceEqual(expected))
+                        throw new InvalidDataException($"Итоговая проверка ячейки {cell:X2} не пройдена.");
                 }
                 var verified = ReadSnapshot(participantOnly: true)
                     ?? throw new IOException("Чип убран после очистки.");
