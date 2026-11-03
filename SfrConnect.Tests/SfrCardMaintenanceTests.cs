@@ -248,12 +248,119 @@ public class SfrCardMaintenanceTests
     [Fact]
     public async Task UnconfirmedWriteReplyDuringClearStopsFurtherMutations()
     {
-        using var transport = new CardMemory { WriteReplyCode = 8 };
+        using var transport = new CardMemory { WriteReplyCode = 8, IgnoreWriteCell = 2 };
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.False(result.Success);
         Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
+        Assert.False(result.RequiresReconnect);
         Assert.Single(transport.Mutations);
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClearCanVerifyEvery2A08ReplyWithoutRepeatingWrites(bool service)
+    {
+        using var transport = new CardMemory { WriteReplyCode = 8 };
+        if (service) transport.Cells[4] = [5, 5, 5, 5];
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(45, clearCard: true);
+        Assert.True(result.Success);
+        Assert.True(result.SignalSent);
+        Assert.True(result.CardCleared);
+        Assert.Equal(45, result.Card!.Number);
+        Assert.All(transport.Mutations.GroupBy(r => r[4]), group => Assert.Single(group));
+        Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(0x55)]
+    public async Task ServiceCardReturnsAfterHeaderWriteAndClearContinuesOnlyAfterReadback(byte reply)
+    {
+        var clock = new MaintenanceClock();
+        using var transport = new CardMemory
+        {
+            WriteReplyCode = reply,
+            OnRequest = (memory, request) =>
+            {
+                if (request[3] == 2 && request[4] == 4) memory.Present = false;
+            }
+        };
+        transport.Cells[4] = [5, 5, 5, 5];
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: delay =>
+        {
+            Assert.Single(transport.Mutations);
+            clock.Advance(delay);
+            if (clock.Milliseconds >= 4200) transport.Present = true;
+        });
+        var result = await new SfrNumberWriter(station).AssignAsync(45);
+        Assert.True(result.Success);
+        Assert.True(result.SignalSent);
+        Assert.Equal(4200, clock.Milliseconds);
+        Assert.Equal(4, transport.Mutations[0][4]);
+        Assert.All(transport.Mutations.GroupBy(r => r[4]), group => Assert.Single(group));
+    }
+
+    [Fact]
+    public async Task AbsentServiceCardAfter2A08ReturnsNormalFailureAtDeadline()
+    {
+        var clock = new MaintenanceClock();
+        using var transport = new CardMemory
+        {
+            WriteReplyCode = 8,
+            OnRequest = (memory, request) => { if (request[3] == 2) memory.Present = false; }
+        };
+        transport.Cells[4] = [5, 5, 5, 5];
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: clock.Advance);
+        var result = await new SfrNumberWriter(station).AssignAsync(45);
+        Assert.False(result.Success);
+        Assert.False(result.RequiresReconnect);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
+        Assert.Equal((byte)4, result.LastAttemptedCell);
+        Assert.Equal(5000, clock.Milliseconds);
+        Assert.Single(transport.Mutations);
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+        transport.Present = true;
+        Assert.Equal(2, station.ReadCardNumber()!.Number);
+    }
+
+    [Fact]
+    public async Task UnchangedServiceHeaderAfter2A08StopsWithoutErasingCommands()
+    {
+        using var transport = new CardMemory { WriteReplyCode = 8, IgnoreWriteCell = 4 };
+        transport.Cells[4] = [5, 5, 5, 5];
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(45);
+        Assert.False(result.Success);
+        Assert.False(result.RequiresReconnect);
+        Assert.Single(transport.Mutations);
+        Assert.Equal(241, transport.Cells[5][0]);
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+    }
+
+    [Fact]
+    public async Task DifferentMarkerOnReturnStopsClearWithoutFurtherWrites()
+    {
+        var clock = new MaintenanceClock();
+        using var transport = new CardMemory
+        {
+            WriteReplyCode = 8,
+            OnRequest = (memory, request) => { if (request[3] == 2) memory.Present = false; }
+        };
+        transport.Cells[4] = [5, 5, 5, 5];
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: delay =>
+        {
+            clock.Advance(delay);
+            transport.Present = true;
+            transport.Cells[1][0] ^= 1;
+        });
+        var result = await new SfrNumberWriter(station).AssignAsync(45);
+        Assert.False(result.Success);
+        Assert.Single(transport.Mutations);
+        Assert.Contains("Маркер", result.Error);
         Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
     }
 
@@ -388,6 +495,14 @@ public class SfrCardMaintenanceTests
         Assert.DoesNotContain(transport.Requests, request => request[3] == 3);
     }
 
+    private sealed class MaintenanceClock : TimeProvider
+    {
+        public long Milliseconds { get; private set; }
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Milliseconds;
+        public void Advance(TimeSpan delay) => Milliseconds += (long)delay.TotalMilliseconds;
+    }
+
     private sealed class CardMemory : MemoryStream
     {
         private readonly Queue<byte[]> replies = new();
@@ -397,6 +512,7 @@ public class SfrCardMaintenanceTests
         public Action<CardMemory, byte[]>? OnRequest { get; init; }
         public bool LoseWriteAck { get; init; }
         public byte WriteReplyCode { get; init; } = 0x55;
+        public bool Present { get; set; } = true;
         public byte? IgnoreWriteCell { get; init; }
         public override int ReadTimeout { get; set; }
 
@@ -420,7 +536,7 @@ public class SfrCardMaintenanceTests
             byte address = request[4];
             if (request[3] == 1)
             {
-                replies.Enqueue(address >= Cells.Length ? Frame(0x2A, 6) : Frame(new byte[] { 1, address }.Concat(Cells[address]).ToArray()));
+                replies.Enqueue(!Present || address >= Cells.Length ? Frame(0x2A, 6) : Frame(new byte[] { 1, address }.Concat(Cells[address]).ToArray()));
             }
             else if (request[3] == 2)
             {

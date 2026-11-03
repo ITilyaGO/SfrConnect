@@ -125,14 +125,11 @@ public sealed class SfrNumberWriter
                     timing.Finish();
                     if (!mustClear) timing.Next("Запись номера и проверка");
                     progress?.Report(mustClear ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
-                    SfrCardNumber verified;
-                    if (mustClear) verified = station.ClearCardCore(number, card.Number, cancellationToken);
-                    else
-                    {
-                        var write = station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
-                        if (!write.Success) return write;
-                        verified = write.Card;
-                    }
+                    var write = mustClear
+                        ? station.TryClearCardCore(number, card.Number, cancellationToken)
+                        : station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
+                    if (!write.Success) return write;
+                    var verified = write.Card;
                     try
                     {
                         timing.Next("Сигнал и пауза станции 300 мс");

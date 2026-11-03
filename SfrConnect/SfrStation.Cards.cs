@@ -36,6 +36,18 @@ public sealed partial class SfrStation
 
     internal SfrCardNumber ClearCardCore(int? newNumber, int? expectedNumber, CancellationToken cancellationToken)
     {
+        lock (sync)
+        {
+            var result = TryClearCardCore(newNumber, expectedNumber, cancellationToken);
+            if (result.Success) return result.Card;
+            exchangeFaulted = true;
+            throw new SfrCardUpdateUnverifiedException(newNumber, result.LastAttemptedCell ?? 0,
+                new InvalidDataException(result.Error));
+        }
+    }
+
+    internal SfrNumberAssignmentResult TryClearCardCore(int? newNumber, int? expectedNumber, CancellationToken cancellationToken)
+    {
         if (newNumber.HasValue)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(newNumber.Value);
@@ -112,14 +124,30 @@ public sealed partial class SfrStation
                     if (!attempted) cancellationToken.ThrowIfCancellationRequested();
                     attempted = true;
                     stream.Write(report, 0, report.Length);
-                    ReadWriteResponse();
+                    var acknowledged = ReadWriteResponse(allowUnconfirmedReadback: true);
+                    if (!acknowledged)
+                    {
+                        log?.Invoke($"ЭТАП · Очистка: проверка ячейки {item.Cell:X2} · ответ 2A 08; проверяем чтением, запись не повторяется.");
+                        var error = VerifyClearCell(item.Cell, item.Data,
+                            item.Cell == 1 ? newMarker : snapshot.Marker,
+                            item.Cell == 4 ? item.Data : expectedHeader);
+                        if (error is not null)
+                            return SfrNumberAssignmentResult.Unverified(newNumber,
+                                $"Ответ записи 2A 08, ячейка {item.Cell:X2}. {error}", item.Cell, clearing: true);
+                    }
                     // Confirm a mode change immediately, especially before erasing service commands.
                     // All other data is checked together in the final memory pass.
                     if (item.Cell == 4)
                     {
-                        var readback = ReadCell(4);
-                        if (readback is null || !readback.AsSpan().SequenceEqual(item.Data))
-                            throw new InvalidDataException("Не подтверждён сброс заголовка после очистки.");
+                        if (acknowledged)
+                        {
+                            var readback = ReadCell(4);
+                            var error = readback is null
+                                ? VerifyClearCell(4, item.Data, snapshot.Marker, item.Data)
+                                : readback.AsSpan().SequenceEqual(item.Data) ? null : "Не подтверждён сброс заголовка после очистки.";
+                            if (error is not null)
+                                return SfrNumberAssignmentResult.Unverified(newNumber, error, item.Cell, clearing: true);
+                        }
                         expectedHeader = item.Data;
                     }
                 }
@@ -141,7 +169,7 @@ public sealed partial class SfrStation
                 if (!verified.Marker.AsSpan().SequenceEqual(newMarker) || !verified.NumberCell.AsSpan().SequenceEqual(desiredNumber))
                     throw new InvalidDataException("Итоговая проверка номера после очистки не пройдена.");
                 timing.Finish();
-                return new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker));
+                return new(new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker)), false, null) { CardCleared = true };
             }
             catch (SfrCardNotReadyException) when (!attempted) { throw; }
             catch (SfrProtectedCardException) when (!attempted) { throw; }
@@ -154,6 +182,25 @@ public sealed partial class SfrStation
             }
         }
     }
+
+    private string? VerifyClearCell(byte cell, byte[] desired, byte[] expectedMarker, byte[] expectedHeader)
+        => VerifyWithRetries(() =>
+        {
+            var unavailable = (true, (string?)$"Чип недоступен при проверке ячейки {cell:X2} после очистки.");
+            var marker = ReadCell(1);
+            if (marker is null) return unavailable;
+            if (!marker.AsSpan().SequenceEqual(expectedMarker)) return (false, "Маркер чипа изменился при очистке.");
+            var header = ReadCell(4);
+            if (header is null) return unavailable;
+            if (!header.AsSpan().SequenceEqual(expectedHeader)) return (false, "Заголовок чипа не совпадает с ожидаемым после очистки.");
+            var data = cell == 4 ? header : cell == 1 ? marker : ReadCell(cell);
+            if (data is null) return unavailable;
+            if (!data.AsSpan().SequenceEqual(desired)) return (false, $"Ячейка {cell:X2} не совпадает с записываемыми данными.");
+            var finalMarker = ReadCell(1);
+            if (finalMarker is null) return unavailable;
+            return finalMarker.AsSpan().SequenceEqual(expectedMarker)
+                ? (false, (string?)null) : (false, "Маркер чипа изменился во время проверки очистки.");
+        }, $"Очистка: проверка ячейки {cell:X2}");
 
     private void CheckMarker(byte[] expected)
     {
