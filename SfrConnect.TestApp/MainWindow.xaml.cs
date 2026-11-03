@@ -370,7 +370,11 @@ public partial class MainWindow : Window
         await operations.Pending;
         await DisconnectAsync();
         logTimer.Stop();
-        allowClose = true;
-        Close();
+        // Cleanup can complete synchronously; leave the current Closing event before closing again.
+        await Dispatcher.InvokeAsync(() =>
+        {
+            allowClose = true;
+            Close();
+        });
     }
 }
