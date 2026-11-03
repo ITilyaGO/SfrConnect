@@ -179,7 +179,7 @@ public partial class SfrWriteTests
     {
         using var transport = new ScriptedStream(
             Snapshot(2).Concat(new[] { WriteAcknowledgement(), Frame(0x2A, 6), Frame(0x2A, 6), Frame(0x2A, 6) }).ToArray());
-        using var station = new SfrStation(transport);
+        using var station = StationWithVerificationTimeout(transport, 400);
         Assert.Throws<SfrWriteUnverifiedException>(() => station.WriteCardNumber(2, 3));
     }
 

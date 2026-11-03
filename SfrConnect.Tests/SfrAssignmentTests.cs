@@ -42,7 +42,7 @@ public partial class SfrWriteTests
         var frames = Snapshot(2).Concat(Snapshot(2)).Append(WriteAcknowledgement())
             .Concat(new[] { Marker(), Number(3), Frame(0x2A, 6), Frame(0x2A, 6), Frame(0x2A, 6) }).Concat(Snapshot(3));
         using var transport = new ScriptedStream(frames.ToArray());
-        using var station = new SfrStation(transport);
+        using var station = StationWithVerificationTimeout(transport, 400);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.False(result.Success);
         Assert.Null(result.Card);

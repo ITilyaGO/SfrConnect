@@ -11,16 +11,27 @@ public sealed partial class SfrStation : IDisposable
     public const int MaximumWritableCardNumber = 39999;
     private readonly Stream stream;
     private readonly Action<string>? log;
+    private readonly TimeSpan verificationReturnTimeout;
+    private readonly TimeSpan verificationRetryInterval;
+    private readonly TimeProvider verificationClock;
+    private readonly Action<TimeSpan> verificationDelay;
     private readonly object sync = new();
     private bool disposed;
     private bool exchangeFaulted;
 
     internal SfrStageTimer MeasureStage(string name) => new(log, name);
 
-    internal SfrStation(Stream stream, Action<string>? log = null)
+    internal SfrStation(Stream stream, Action<string>? log = null, SfrStationOptions? options = null,
+        TimeProvider? verificationClock = null, Action<TimeSpan>? verificationDelay = null)
     {
+        options ??= new SfrStationOptions();
+        options.Validate();
         this.stream = stream;
         this.log = log;
+        verificationReturnTimeout = TimeSpan.FromMilliseconds(options.VerificationReturnTimeoutMs);
+        verificationRetryInterval = TimeSpan.FromMilliseconds(options.VerificationRetryIntervalMs);
+        this.verificationClock = verificationClock ?? TimeProvider.System;
+        this.verificationDelay = verificationDelay ?? Thread.Sleep;
     }
 
     /// <summary>Lists matching interfaces without opening a communication stream.</summary>
@@ -35,8 +46,10 @@ public sealed partial class SfrStation : IDisposable
     }
 
     /// <summary>Opens one explicitly selected interface. Does not send any commands.</summary>
-    public static SfrStation Open(string devicePath, Action<string>? log = null)
+    public static SfrStation Open(string devicePath, Action<string>? log = null, SfrStationOptions? options = null)
     {
+        options ??= new SfrStationOptions();
+        options.Validate();
         EnsureWindows();
         ArgumentException.ThrowIfNullOrWhiteSpace(devicePath);
         var device = DeviceList.Local.GetHidDevices(VendorId, ProductId)
@@ -54,7 +67,7 @@ public sealed partial class SfrStation : IDisposable
         {
             stream.WriteTimeout = 2000;
             stream.ReadTimeout = 1000;
-            return new SfrStation(stream, log);
+            return new SfrStation(stream, log, options);
         }
         catch
         {
@@ -221,14 +234,21 @@ public sealed partial class SfrStation : IDisposable
 
     private string? VerifyNumberWithRetries(byte[] marker, byte[] number)
     {
-        const int attempts = 3;
-        for (int attempt = 1; ; attempt++)
+        var check = CheckWrittenNumber(marker, number);
+        if (check.Error is null || !check.Unavailable) return check.Error;
+        // A partial reappearance must not restart the return deadline.
+        var started = verificationClock.GetTimestamp();
+        for (int attempt = 2; ; attempt++)
         {
-            var check = CheckWrittenNumber(marker, number);
-            if (check.Error is null || !check.Unavailable || attempt == attempts) return check.Error;
-            log?.Invoke($"ЭТАП · Проверка записи · чип недоступен, повтор чтения {attempt + 1}/{attempts} через 200 мс. Запись не повторяется.");
+            var remaining = verificationReturnTimeout - verificationClock.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) return check.Error;
+            var delay = remaining < verificationRetryInterval ? remaining : verificationRetryInterval;
+            log?.Invoke($"ЭТАП · Проверка записи · ждём возвращения чипа, осталось {remaining.TotalMilliseconds:F0} мс; повтор чтения {attempt} через {delay.TotalMilliseconds:F0} мс. Запись не повторяется.");
             // Once a write is attempted, cancellation must not hide its verification outcome.
-            Thread.Sleep(200);
+            verificationDelay(delay);
+            if (verificationClock.GetElapsedTime(started) > verificationReturnTimeout) return check.Error;
+            check = CheckWrittenNumber(marker, number);
+            if (check.Error is null || !check.Unavailable) return check.Error;
         }
     }
 
