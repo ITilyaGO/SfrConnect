@@ -20,6 +20,7 @@ public sealed partial class SfrStation : IDisposable
     private bool exchangeFaulted;
 
     internal bool FormatUnknownCards { get; }
+    private readonly SfrClearMode clearMode;
 
     internal SfrStageTimer MeasureStage(string name) => new(log, name);
 
@@ -31,6 +32,7 @@ public sealed partial class SfrStation : IDisposable
         this.stream = stream;
         this.log = log;
         FormatUnknownCards = options.FormatUnknownCards;
+        clearMode = options.ClearMode;
         verificationReturnTimeout = TimeSpan.FromMilliseconds(options.VerificationReturnTimeoutMs);
         verificationRetryInterval = TimeSpan.FromMilliseconds(options.VerificationRetryIntervalMs);
         this.verificationClock = verificationClock ?? TimeProvider.System;

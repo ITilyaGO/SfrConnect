@@ -107,7 +107,11 @@ public partial class MainWindow : Window
                 return;
             }
             if (DevicesBox.SelectedItem is not SfrDeviceInfo device) return;
-            station = await Task.Run(() => SfrStation.Open(device.DevicePath, QueueLog));
+            var options = new SfrStationOptions
+            {
+                ClearMode = QuickClearBox.IsChecked == true ? SfrClearMode.ThroughLastNonEmptyCell : SfrClearMode.FullMemory
+            };
+            station = await Task.Run(() => SfrStation.Open(device.DevicePath, QueueLog, options));
             numberWriter = new SfrNumberWriter(station);
             AppendLog($"Подключено: {device.DevicePath}");
             monitoring = true;
@@ -237,7 +241,7 @@ public partial class MainWindow : Window
                 cardInfo = new SfrCardInfo(SfrCardKind.Participant, result.Card.Number, result.Card.MarkerHex, result.CardCleared ? "05000000" : cardInfo?.HeaderHex ?? "");
                 presence.MarkWriteAttempt();
                 var completed = result.CardCleared
-                    ? $"Отметки очищены, номер {result.Card.Number} проверен"
+                    ? $"Очистка до ячейки {result.ClearedThroughCell:X2} проверена, номер {result.Card.Number} проверен"
                     : $"Номер {result.Card.Number} проверен";
                 ShowResult(result.SignalSent
                     ? $"{completed}, сигнал отправлен. Можно убрать чип."
@@ -273,6 +277,7 @@ public partial class MainWindow : Window
         var connected = station is not null;
         var available = !operations.IsInteractiveBusy && !closing;
         RefreshButton.IsEnabled = available && !connected;
+        QuickClearBox.IsEnabled = available && !connected;
         DevicesBox.IsEnabled = available && !connected;
         ConnectButton.Content = connected ? "Отключить" : "Подключить";
         ConnectButton.IsEnabled = available && (connected || DevicesBox.SelectedItem is SfrDeviceInfo);

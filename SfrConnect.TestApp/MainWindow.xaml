@@ -26,6 +26,8 @@
                               ToolTip="При нескольких станциях выберите нужную. Путь показан ниже." />
                 </DockPanel>
                 <TextBlock x:Name="DevicePathText" FontSize="11" Foreground="#526174" TextTrimming="CharacterEllipsis" Margin="0,6,0,12" />
+                <CheckBox x:Name="QuickClearBox" Content="Ускоренная очистка по последней непустой ячейке" Margin="0,0,0,8"
+                          ToolTip="Выберите до подключения. Память читается полностью, пустой хвост повторно не проверяется. Для служебных и неизвестных чипов — полная проверка." />
                 <WrapPanel>
                     <Button x:Name="ConnectButton" Content="Подключить" Click="Connect_Click" />
                     <Button x:Name="MonitorButton" Content="Остановить чтение" Click="Monitor_Click" />

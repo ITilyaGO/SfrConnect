@@ -83,6 +83,7 @@ public sealed partial class SfrStation
                     return SfrNumberAssignmentResult.PreparationFailed(newNumber,
                         "Счётчик выходит за поддерживаемые 128 ячеек. Очистка не началась.");
                 var plan = new List<(byte Cell, byte[] Data)>();
+                byte lastOccupiedCell = 5;
                 timing.Next("Очистка: чтение памяти и подготовка");
                 bool retrying = false;
                 var preparationError = VerifyWithRetries(() =>
@@ -96,6 +97,7 @@ public sealed partial class SfrStation
                     retrying = true;
                     // Do not reuse a partial scan after contact is lost.
                     plan.Clear();
+                    lastOccupiedCell = 5;
                     if (normalize) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
                     for (int cell = 2; cell <= 127; cell++)
                     {
@@ -104,12 +106,22 @@ public sealed partial class SfrStation
                         var data = ReadCell((byte)cell);
                         if (data is null)
                             return (true, (string?)$"Не удалось прочитать ячейку {cell:X2} при подготовке очистки. Изменения не отправлены.");
-                        if (data.Any(value => value != 0)) plan.Add(((byte)cell, new byte[4]));
+                        if (data.Any(value => value != 0))
+                        {
+                            plan.Add(((byte)cell, new byte[4]));
+                            lastOccupiedCell = (byte)Math.Max(lastOccupiedCell, cell);
+                        }
                     }
                     return CheckClearPreparationIdentity(marker, header);
                 }, "Очистка: подготовка", cancellationToken);
                 if (preparationError is not null)
                     return SfrNumberAssignmentResult.PreparationFailed(newNumber, preparationError);
+                // Keep the boundary from the completed full scan; cell 04 is not the source of this limit.
+                byte lastClearCell = !normalize && clearMode == SfrClearMode.ThroughLastNonEmptyCell
+                    ? lastOccupiedCell : (byte)127;
+                log?.Invoke($"ЭТАП · Очистка: диапазон итоговой проверки 02–{lastClearCell:X2} · " +
+                    (lastClearCell < 127 ? "по последней непустой ячейке; пустой хвост прочитан при подготовке и повторно не проверяется."
+                        : "полный поддерживаемый диапазон."));
                 int resultNumber = newNumber ?? (normalize && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
                 byte[] desiredNumber = newNumber.HasValue || normalize ? SfrProtocol.EncodeCardNumber(resultNumber) : snapshot.NumberCell;
                 if (!desiredNumber.AsSpan().SequenceEqual(numberCell)) plan.Add((3, desiredNumber));
@@ -165,8 +177,8 @@ public sealed partial class SfrStation
                 // Restart the whole read-only pass after a loss, so success never combines partial reads.
                 var verificationError = VerifyWithRetries(() =>
                 {
-                    timing.Next("Очистка: итоговая проверка памяти 02–7F");
-                    var check = CheckClearedMemory(newMarker, desiredNumber, clearedHeader,
+                    timing.Next($"Очистка: итоговая проверка памяти 02–{lastClearCell:X2}");
+                    var check = CheckClearedMemory(newMarker, desiredNumber, clearedHeader, lastClearCell,
                         () => timing.Next("Очистка: завершающая проверка номера и типа"));
                     if (check.Error is not null) timing.Finish(success: false);
                     return check;
@@ -174,7 +186,8 @@ public sealed partial class SfrStation
                 if (verificationError is not null)
                     return SfrNumberAssignmentResult.Unverified(newNumber, verificationError, lastCell, clearing: true);
                 timing.Finish();
-                return new(new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker)), false, null) { CardCleared = true };
+                return new(new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker)), false, null)
+                { CardCleared = true, ClearedThroughCell = lastClearCell };
             }
             catch (SfrCardNotReadyException) when (!attempted) { throw; }
             catch (SfrProtectedCardException) when (!attempted) { throw; }
@@ -200,13 +213,13 @@ public sealed partial class SfrStation
     }
 
     private (bool Unavailable, string? Error) CheckClearedMemory(byte[] marker, byte[] number,
-        byte[] header, Action beforeNumberCheck)
+        byte[] header, byte lastClearCell, Action beforeNumberCheck)
     {
         var firstMarker = ReadCell(1);
         if (firstMarker is null) return (true, "Чип недоступен перед итоговой проверкой очистки.");
         if (!firstMarker.AsSpan().SequenceEqual(marker)) return (false, "Маркер чипа изменился после очистки.");
         byte[] empty = new byte[4];
-        for (int cell = 2; cell <= 127; cell++)
+        for (int cell = 2; cell <= lastClearCell; cell++)
         {
             var expected = cell == 3 ? number : cell == 4 ? header : empty;
             var readback = ReadCell((byte)cell);
