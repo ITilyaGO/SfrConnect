@@ -92,7 +92,7 @@ public partial class SfrCardMaintenanceTests
         Assert.True(result.Success);
         Assert.False(result.CardCleared);
         Assert.Null(result.ClearedThroughCell);
-        Assert.Equal(3, Assert.Single(transport.Mutations)[4]);
+        Assert.Equal(new byte[] { 3, 1 }, transport.Mutations.Select(r => r[4]));
     }
 
     [Theory]

@@ -187,16 +187,16 @@ public partial class SfrCardMaintenanceTests
     }
 
     [Fact]
-    public async Task AssignmentWithoutClearOnlyChangesNumber()
+    public async Task AssignmentWithoutClearOnlyChangesNumberAndTimeMarker()
     {
         using var transport = new CardMemory();
         var before = transport.Cells.Select(cell => cell.ToArray()).ToArray();
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.False(result.CardCleared);
-        Assert.Equal(3, Assert.Single(transport.Mutations)[4]);
+        Assert.Equal(new byte[] { 3, 1 }, transport.Mutations.Select(r => r[4]));
         for (int i = 0; i < before.Length; i++)
-            if (i != 3) Assert.Equal(before[i], transport.Cells[i]);
+            if (i is not 1 and not 3) Assert.Equal(before[i], transport.Cells[i]);
     }
 
     [Fact]
@@ -521,6 +521,7 @@ public partial class SfrCardMaintenanceTests
         public List<byte[]> Mutations { get; } = [];
         public Action<CardMemory, byte[]>? OnRequest { get; init; }
         public bool LoseWriteAck { get; init; }
+        public byte? LoseWriteAckCell { get; init; }
         public byte WriteReplyCode { get; init; } = 0x55;
         public bool Present { get; set; } = true;
         public byte? IgnoreWriteCell { get; init; }
@@ -552,7 +553,7 @@ public partial class SfrCardMaintenanceTests
             {
                 Mutations.Add(request);
                 if (address != IgnoreWriteCell) Cells[address] = request[5..9];
-                if (!LoseWriteAck) replies.Enqueue(Frame(0x2A, WriteReplyCode));
+                if (!LoseWriteAck && address != LoseWriteAckCell) replies.Enqueue(Frame(0x2A, WriteReplyCode));
             }
         }
 

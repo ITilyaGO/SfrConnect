@@ -14,7 +14,7 @@ public partial class SfrWriteTests
         Assert.Equal(success, result.Success);
         Assert.Equal(success, result.SignalSent);
         Assert.False(result.RequiresReconnect);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         if (!success)
         {
             Assert.Null(result.Card);
@@ -35,7 +35,7 @@ public partial class SfrWriteTests
         Assert.True(result.Success);
         Assert.True(result.SignalSent);
         Assert.Equal(4200, clock.ElapsedMs);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public partial class SfrWriteTests
         Assert.False(result.RequiresReconnect);
         Assert.Contains("2A 08", result.Error);
         Assert.Equal(5000, clock.ElapsedMs);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
         Assert.Equal(2, station.ReadCardNumber()!.Number);
     }
@@ -64,7 +64,7 @@ public partial class SfrWriteTests
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.False(result.Success);
         Assert.True(result.RequiresReconnect);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
     }
 
@@ -104,7 +104,7 @@ public partial class SfrWriteTests
         Assert.Equal(3, result.Card!.Number);
         Assert.True(result.SignalSent);
         Assert.Null(result.Error);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.Single(transport.Writes, r => r[3] == 3);
         Assert.Single(messages, m => m.Contains("повтор чтения 2 через"));
     }
@@ -122,7 +122,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.True(result.Success);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.True(result.SignalSent);
     }
 
@@ -139,7 +139,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3, cancellation.Token);
         Assert.True(result.Success);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public partial class SfrWriteTests
         Assert.True(result.CardMayHaveChanged);
         Assert.False(result.RequiresReconnect);
         Assert.Equal(12, transport.Writes.Count);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
         Assert.Equal(3, station.ReadCardNumber()!.Number);
     }
@@ -176,7 +176,7 @@ public partial class SfrWriteTests
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.False(result.Success);
         Assert.Single(messages, m => m.Contains("повтор чтения"));
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
     }
 
@@ -206,7 +206,7 @@ public partial class SfrWriteTests
         Assert.True(result.Success);
         Assert.True(result.SignalSent);
         Assert.Equal(4200, clock.ElapsedMs);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.Equal(5000, new SfrStationOptions().VerificationReturnTimeoutMs);
     }
 
@@ -230,7 +230,7 @@ public partial class SfrWriteTests
         Assert.False(result.RequiresReconnect);
         Assert.Equal(timeout, clock.ElapsedMs);
         Assert.Equal((int)Math.Ceiling((double)timeout / interval), clock.Delays);
-        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.Single(transport.Writes, r => r[3] == 2 && r[4] == 3);
         Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
     }
 

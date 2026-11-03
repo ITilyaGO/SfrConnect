@@ -90,7 +90,8 @@ public sealed class SfrNumberWriter
             }
             catch (SfrWriteUnverifiedException error)
             {
-                result = SfrNumberAssignmentResult.Unverified(number, error.InnerException?.Message ?? error.Message, reconnect: true);
+                result = SfrNumberAssignmentResult.Unverified(number, error.InnerException?.Message ?? error.Message,
+                    error.LastAttemptedCell, reconnect: true);
             }
             catch (SfrCardUpdateUnverifiedException error)
             {

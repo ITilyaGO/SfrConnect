@@ -8,7 +8,7 @@ public partial class SfrWriteTests
         using var transport = Exchange(585, 123, reservedByte: 0xA5);
         using var station = new SfrStation(transport);
         Assert.Equal(123, station.WriteCardNumber(123).Number);
-        var write = Assert.Single(transport.Writes, report => report[3] == 2);
+        var write = Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.Equal(new byte[] { 123, 0, 0, 0 }, write[5..9]);
     }
 
@@ -26,7 +26,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(Snapshot(123));
         using var station = new SfrStation(transport);
         Assert.Equal(123, station.WriteCardNumber(123).Number);
-        Assert.DoesNotContain(transport.Writes, report => report[3] == 2);
+        Assert.Equal(1, Assert.Single(transport.Writes, report => report[3] == 2)[4]);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public partial class SfrWriteTests
         using var transport = Exchange(123, 123, reservedByte: 0xA5);
         using var station = new SfrStation(transport);
         Assert.Equal(123, station.WriteCardNumber(123).Number);
-        var write = Assert.Single(transport.Writes, report => report[3] == 2);
+        var write = Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.Equal(new byte[] { 123, 0, 0, 0 }, write[5..9]);
     }
 
@@ -60,7 +60,7 @@ public partial class SfrWriteTests
     }
 
     [Fact]
-    public void ChangesOnlyNumberCellZerosFourthByteAndVerifiesReadback()
+    public void ChangesNumberAndTimeMarkerZerosFourthByteAndVerifiesReadback()
     {
         var log = new List<string>();
         using var transport = Exchange(2, 3, reservedByte: 0xA5);
@@ -68,12 +68,13 @@ public partial class SfrWriteTests
 
         var card = station.WriteCardNumber(2, 3);
 
-        Assert.Equal(new SfrCardNumber(3, "00195503"), card);
-        var write = Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Equal(3, card.Number);
+        Assert.Equal(Convert.ToHexString(transport.Writes.Single(r => r[3] == 2 && r[4] == 1)[5..9]), card.MarkerHex);
+        var write = Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.Equal(Convert.FromHexString("3F09FD02030300000008FE"), write[..11]);
         Assert.Equal(64, write.Length);
         Assert.All(write[11..], value => Assert.Equal(0, value));
-        Assert.Equal(new byte[] { 1, 4, 3, 1, 3, 1, 4, 3, 1 }, transport.Writes.Select(report => report[4]).ToArray());
+        Assert.Equal(new byte[] { 1, 4, 3, 1, 3, 1, 4, 3, 1, 1, 1, 4, 3, 1 }, transport.Writes.Select(report => report[4]).ToArray());
         Assert.Contains(log, message => message.Contains("Запись подтверждена повторным чтением"));
     }
 
@@ -136,12 +137,12 @@ public partial class SfrWriteTests
     }
 
     [Fact]
-    public void AlreadyAssignedNumberDoesNotRewriteMemory()
+    public void AlreadyAssignedNumberUpdatesOnlyTimeMarker()
     {
         using var transport = new ScriptedStream(Snapshot(3));
         using var station = new SfrStation(transport);
         Assert.Equal(3, station.WriteCardNumber(3, 3).Number);
-        Assert.DoesNotContain(transport.Writes, report => report[3] == 2);
+        Assert.Equal(1, Assert.Single(transport.Writes, report => report[3] == 2)[4]);
     }
 
     [Fact]
@@ -192,7 +193,7 @@ public partial class SfrWriteTests
         Assert.IsType<TimeoutException>(error.InnerException);
         Assert.Throws<InvalidOperationException>(() => station.WriteCardNumber(2, 3));
         Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.Equal(5, transport.Writes.Count);
     }
 
@@ -203,7 +204,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var error = Assert.Throws<SfrWriteUnverifiedException>(() => station.WriteCardNumber(2, 3));
         Assert.IsType<IOException>(error.InnerException);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
     }
 
     [Theory]
@@ -256,6 +257,9 @@ public partial class SfrWriteTests
     private sealed class ScriptedStream(params byte[][] responses) : MemoryStream
     {
         private bool headerRequested;
+        private byte[]? writtenMarker;
+        private byte[]? lastNumber;
+        private readonly Queue<byte[]> markerReplies = new();
         private readonly Queue<byte[]> responses = new(responses);
         public List<byte[]> Writes { get; } = [];
         public bool FailWrite { get; init; }
@@ -275,10 +279,27 @@ public partial class SfrWriteTests
             {
                 throw new IOException("USB disconnected during write.");
             }
+            // Number-exchange failures remain scripted; the final marker update uses stored memory.
+            // Marker-specific faults are exercised independently with CardMemory.
+            if (report[3] == 2 && report[4] == 1)
+            {
+                writtenMarker = Frame(new byte[] { 1, 1 }.Concat(report[5..9]).ToArray());
+                markerReplies.Enqueue(WriteAcknowledgement());
+                markerReplies.Enqueue(writtenMarker);
+                markerReplies.Enqueue(HeaderReply?.Invoke() ?? Frame(1, 4, 5, 0, 0, 0));
+                markerReplies.Enqueue(lastNumber ?? throw new InvalidOperationException("No number was read before the marker update."));
+                markerReplies.Enqueue(writtenMarker);
+            }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (markerReplies.TryDequeue(out var markerReply))
+            {
+                headerRequested = false;
+                markerReply.CopyTo(buffer, offset);
+                return markerReply.Length;
+            }
             if (headerRequested)
             {
                 headerRequested = false;
@@ -290,6 +311,8 @@ public partial class SfrWriteTests
             {
                 throw new TimeoutException("Simulated station timeout.");
             }
+            if (response[3] == 1 && response[4] == 3) lastNumber = response;
+            if (writtenMarker is not null && response.AsSpan().SequenceEqual(Marker())) response = writtenMarker;
             response.CopyTo(buffer, offset);
             return response.Length;
         }

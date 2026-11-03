@@ -18,7 +18,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.Equal(3, result.Card!.Number);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
     }
 
     [Theory]
@@ -33,7 +33,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.Equal(3, result.Card!.Number);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public partial class SfrWriteTests
         Assert.True(result.CardMayHaveChanged);
         Assert.False(result.RequiresReconnect);
         Assert.Contains("недоступен", result.Error);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.DoesNotContain(transport.Writes, report => report[3] == 3);
         Assert.Equal(3, station.ReadCardNumber()!.Number);
     }
@@ -65,7 +65,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3, waitForRemoval: true);
         Assert.Equal(3, result.Card!.Number);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public partial class SfrWriteTests
         Assert.True(result.SignalSent);
         Assert.Null(result.SignalError);
         Assert.Equal(new[] { SfrAssignmentStage.WaitingForCard, SfrAssignmentStage.Writing }, stages);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.Equal(3, transport.Writes[^1][3]);
     }
 
@@ -180,7 +180,7 @@ public partial class SfrWriteTests
         var result = await new SfrNumberWriter(station).AssignAsync(3);
         Assert.False(result.Success);
         Assert.Equal(SfrAssignmentFailure.WriteUnverified, result.Failure);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
         Assert.DoesNotContain(transport.Writes, report => report[3] == 3);
     }
 
@@ -218,7 +218,7 @@ public partial class SfrWriteTests
             progress: new InlineProgress(stages.Add), waitForRemoval: true);
         Assert.Equal(3, result.Card!.Number);
         Assert.Equal(new[] { SfrAssignmentStage.WaitingForRemoval, SfrAssignmentStage.WaitingForCard, SfrAssignmentStage.Writing }, stages);
-        Assert.Single(transport.Writes, report => report[3] == 2);
+        Assert.Single(transport.Writes, report => report[3] == 2 && report[4] == 3);
     }
 
     [Fact]

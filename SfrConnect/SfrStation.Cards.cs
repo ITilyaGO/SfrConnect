@@ -131,7 +131,7 @@ public sealed partial class SfrStation
                 if (!desiredNumber.AsSpan().SequenceEqual(numberCell)) plan.Add((3, desiredNumber));
                 byte[] clearedHeader = [5, 0, 0, 0];
                 if (!normalize && !header.AsSpan().SequenceEqual(clearedHeader)) plan.Add((4, clearedHeader));
-                var newMarker = Convert.FromHexString("00" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
+                var newMarker = CreateTimeMarker();
                 plan.Add((1, newMarker));
 
                 var expectedHeader = header;
@@ -258,6 +258,9 @@ public sealed partial class SfrStation
             return finalMarker.AsSpan().SequenceEqual(expectedMarker)
                 ? (false, (string?)null) : (false, "Маркер чипа изменился во время проверки очистки.");
         }, $"Очистка: проверка ячейки {cell:X2}");
+
+    private static byte[] CreateTimeMarker() =>
+        Convert.FromHexString("00" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
 
     private void CheckMarker(byte[] expected)
     {

@@ -25,9 +25,9 @@ public partial class SfrCardMaintenanceTests
         Assert.True(result.SignalSent);
         Assert.False(result.CardCleared);
         Assert.Equal(123, result.Card!.Number);
-        Assert.Equal(3, Assert.Single(transport.Mutations)[4]);
+        Assert.Equal(new byte[] { 3, 1 }, transport.Mutations.Select(r => r[4]));
         for (int cell = 0; cell < before.Length; cell++)
-            if (cell != 3) Assert.Equal(before[cell], transport.Cells[cell]);
+            if (cell is not 1 and not 3) Assert.Equal(before[cell], transport.Cells[cell]);
     }
 
     [Theory]
@@ -174,7 +174,7 @@ public partial class SfrCardMaintenanceTests
         var result = await writer.AssignAsync(123);
         Assert.True(result.Success);
         Assert.False(result.CardCleared);
-        Assert.Single(transport.Mutations);
+        Assert.Equal(new byte[] { 3, 1 }, transport.Mutations.Select(r => r[4]));
     }
 
     [Fact]

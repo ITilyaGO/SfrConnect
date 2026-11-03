@@ -130,7 +130,7 @@ public sealed partial class SfrStation : IDisposable
     }
 
     /// <summary>
-    /// For participant cards, changes only cell 03 and verifies it. Service/allowed unknown cards are cleared and converted.
+    /// For participant cards, updates the number and time marker, preserving punches. Service/allowed unknown cards are cleared and converted.
     /// The caller does not need to know the current number.
     /// </summary>
     public SfrCardNumber WriteCardNumber(int newNumber) => WriteCardNumberCore(null, newNumber);
@@ -158,7 +158,7 @@ public sealed partial class SfrStation : IDisposable
             var result = TryWriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken, convertService);
             if (result.Success) return result.Card;
             exchangeFaulted = true;
-            throw new SfrWriteUnverifiedException(newNumber, new InvalidDataException(result.Error));
+            throw new SfrWriteUnverifiedException(newNumber, new InvalidDataException(result.Error), result.LastAttemptedCell ?? 3);
         }
     }
 
@@ -173,6 +173,7 @@ public sealed partial class SfrStation : IDisposable
             EnsureExchangeAvailable();
             cancellationToken.ThrowIfCancellationRequested();
             var writeAttempted = false;
+            byte lastAttemptedCell = 3;
             try
             {
                 var snapshot = ReadSnapshot(participantOnly: true)
@@ -187,28 +188,47 @@ public sealed partial class SfrStation : IDisposable
                 byte[] desiredCell = SfrProtocol.EncodeCardNumber(newNumber);
                 if (snapshot.NumberCell.AsSpan().SequenceEqual(desiredCell))
                 {
-                    log?.Invoke($"Номер уже равен {newNumber}. Запись не требуется.");
-                    return new(new SfrCardNumber(currentNumber, Convert.ToHexString(snapshot.Marker)), false, null);
+                    log?.Invoke($"Номер уже равен {newNumber}. Обновляем метку времени.");
                 }
-
-                var request = SfrProtocol.CreateNumberWriteReport(desiredCell);
-                log?.Invoke($"Запись номера: {currentNumber} → {newNumber}, только ячейка 03.");
-                log?.Invoke($"TX попытка ({request.Length} байт): {Convert.ToHexString(request)}");
-                cancellationToken.ThrowIfCancellationRequested();
-                writeAttempted = true;
-                stream.Write(request, 0, request.Length);
-                var acknowledged = ReadWriteResponse(allowUnconfirmedReadback: true);
-                if (!acknowledged)
-                    log?.Invoke("ЭТАП · Проверка записи · получен ответ 2A 08 вместо подтверждения. Проверяем данные чтением; запись не повторяется.");
-
-                var verificationError = VerifyNumberWithRetries(snapshot.Marker, desiredCell);
-                if (verificationError is not null)
+                else
                 {
-                    return SfrNumberAssignmentResult.Unverified(newNumber,
-                        acknowledged ? verificationError : $"Ответ записи 2A 08. {verificationError}");
+                    var request = SfrProtocol.CreateNumberWriteReport(desiredCell);
+                    log?.Invoke($"Запись номера: {currentNumber} → {newNumber}, ячейка 03; затем обновление метки времени.");
+                    log?.Invoke($"TX попытка ({request.Length} байт): {Convert.ToHexString(request)}");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    writeAttempted = true;
+                    stream.Write(request, 0, request.Length);
+                    var acknowledged = ReadWriteResponse(allowUnconfirmedReadback: true);
+                    if (!acknowledged)
+                        log?.Invoke("ЭТАП · Проверка записи · получен ответ 2A 08 вместо подтверждения. Проверяем данные чтением; запись не повторяется.");
+
+                    var verificationError = VerifyNumberWithRetries(snapshot.Marker, desiredCell);
+                    if (verificationError is not null)
+                    {
+                        return SfrNumberAssignmentResult.Unverified(newNumber,
+                            acknowledged ? verificationError : $"Ответ записи 2A 08. {verificationError}");
+                    }
                 }
+
+                // Update the marker even when the number already matches. After any mutation,
+                // cancellation cannot skip the remaining verification or hide a partial result.
+                var newMarker = CreateTimeMarker();
+                var markerRequest = SfrProtocol.CreateWriteReport(1, newMarker);
+                log?.Invoke($"Обновление метки времени: ячейка 01, {Convert.ToHexString(newMarker)}.");
+                log?.Invoke($"TX попытка ({markerRequest.Length} байт): {Convert.ToHexString(markerRequest)}");
+                if (!writeAttempted) cancellationToken.ThrowIfCancellationRequested();
+                lastAttemptedCell = 1;
+                writeAttempted = true;
+                stream.Write(markerRequest, 0, markerRequest.Length);
+                var markerAcknowledged = ReadWriteResponse(allowUnconfirmedReadback: true);
+                if (!markerAcknowledged)
+                    log?.Invoke("ЭТАП · Проверка метки времени · ответ 2A 08; проверяем чтением, запись не повторяется.");
+                var markerError = VerifyNumberWithRetries(newMarker, desiredCell);
+                if (markerError is not null)
+                    return SfrNumberAssignmentResult.Unverified(newNumber,
+                        markerAcknowledged ? markerError : $"Ответ записи метки 2A 08. {markerError}", 1);
                 log?.Invoke($"Запись подтверждена повторным чтением: номер {newNumber}.");
-                return new(new SfrCardNumber(newNumber, Convert.ToHexString(snapshot.Marker)), false, null);
+                return new(new SfrCardNumber(newNumber, Convert.ToHexString(newMarker)), false, null);
             }
             catch (SfrCardNotReadyException) when (!writeAttempted)
             {
@@ -234,7 +254,7 @@ public sealed partial class SfrStation : IDisposable
                 exchangeFaulted = true;
                 if (writeAttempted)
                 {
-                    throw new SfrWriteUnverifiedException(newNumber, error);
+                    throw new SfrWriteUnverifiedException(newNumber, error, lastAttemptedCell);
                 }
                 throw;
             }
