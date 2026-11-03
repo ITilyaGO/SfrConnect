@@ -34,7 +34,9 @@ public class SfrCardMaintenanceTests
     {
         using var transport = new CardMemory { IgnoreWriteCell = 5 };
         using var station = new SfrStation(transport);
-        await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
+        var result = await new SfrNumberWriter(station).ClearAsync();
+        Assert.False(result.Success);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
         Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
         Assert.Equal(241, transport.Cells[5][0]);
     }
@@ -62,7 +64,9 @@ public class SfrCardMaintenanceTests
             }
         };
         using var station = new SfrStation(transport);
-        await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
+        var result = await new SfrNumberWriter(station).ClearAsync();
+        Assert.False(result.Success);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
         Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
     }
 
@@ -150,7 +154,7 @@ public class SfrCardMaintenanceTests
         var logs = new List<string>();
         using var station = new SfrStation(transport, logs.Add);
         var result = await new SfrNumberWriter(station).AssignAsync(123, clearCard: true);
-        Assert.Equal(123, result.Card.Number);
+        Assert.Equal(123, result.Card!.Number);
         Assert.True(result.CardCleared);
         Assert.True(result.SignalSent);
         Assert.Equal(new byte[] { 123, 0, 0, 0 }, transport.Cells[3]);
@@ -175,7 +179,7 @@ public class SfrCardMaintenanceTests
         using var transport = new CardMemory();
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).ClearAsync();
-        Assert.Equal(2, result.Card.Number);
+        Assert.Equal(2, result.Card!.Number);
         Assert.True(result.CardCleared);
         Assert.DoesNotContain(transport.Mutations, report => report[4] == 3);
     }
@@ -219,7 +223,7 @@ public class SfrCardMaintenanceTests
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3, cancellation.Token, clearCard: true);
         Assert.True(result.CardCleared);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
     }
 
     [Fact]
@@ -228,10 +232,11 @@ public class SfrCardMaintenanceTests
         using var transport = new CardMemory { LoseWriteAck = true };
         var logs = new List<string>();
         using var station = new SfrStation(transport, logs.Add);
-        var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() =>
-            new SfrNumberWriter(station).AssignAsync(3, clearCard: true));
+        var error = await new SfrNumberWriter(station).AssignAsync(3, clearCard: true);
+        Assert.False(error.Success);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, error.Failure);
         Assert.Equal(3, error.RequestedNumber);
-        Assert.Equal(2, error.LastAttemptedCell);
+        Assert.Equal((byte)2, error.LastAttemptedCell);
         Assert.Single(transport.Mutations);
         Assert.DoesNotContain(transport.Requests, request => request[3] == 3);
         Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
@@ -248,8 +253,9 @@ public class SfrCardMaintenanceTests
             OnRequest = (memory, request) => { if (request[3] == 2) memory.Cells[4] = [5, 5, 5, 5]; }
         };
         using var station = new SfrStation(transport);
-        var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).ClearAsync());
-        Assert.IsType<SfrCardNotReadyException>(error.InnerException);
+        var error = await new SfrNumberWriter(station).ClearAsync();
+        Assert.False(error.Success);
+        Assert.Contains("Счётчик изменился", error.Error);
         Assert.Single(transport.Mutations);
     }
 
@@ -301,7 +307,7 @@ public class SfrCardMaintenanceTests
         var result = await new SfrNumberWriter(station).AssignAsync(123, clearCard: false);
         Assert.True(result.CardCleared);
         Assert.True(result.SignalSent);
-        Assert.Equal(123, result.Card.Number);
+        Assert.Equal(123, result.Card!.Number);
         Assert.Equal(4, transport.Mutations[0][4]);
         Assert.Equal(new byte[] { 5, 0, 0, 0 }, transport.Mutations[0][5..9]);
         Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
@@ -341,7 +347,7 @@ public class SfrCardMaintenanceTests
         if (invalidNumber) transport.Cells[3] = [255, 255, 255, 255];
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).ClearAsync();
-        Assert.Equal(invalidNumber ? 0 : 2, result.Card.Number);
+        Assert.Equal(invalidNumber ? 0 : 2, result.Card!.Number);
         Assert.True(result.CardCleared);
         Assert.Equal(SfrCardKind.Participant, station.ReadCardInfo()!.Kind);
     }
@@ -362,8 +368,10 @@ public class SfrCardMaintenanceTests
         using var transport = new CardMemory { LoseWriteAck = true };
         transport.Cells[4] = [0, 1, 0, 0];
         using var station = new SfrStation(transport);
-        var error = await Assert.ThrowsAsync<SfrCardUpdateUnverifiedException>(() => new SfrNumberWriter(station).AssignAsync(123));
-        Assert.Equal(4, error.LastAttemptedCell);
+        var error = await new SfrNumberWriter(station).AssignAsync(123);
+        Assert.False(error.Success);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, error.Failure);
+        Assert.Equal((byte)4, error.LastAttemptedCell);
         Assert.Single(transport.Mutations);
         Assert.DoesNotContain(transport.Requests, request => request[3] == 3);
     }

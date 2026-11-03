@@ -217,6 +217,20 @@ public partial class MainWindow : Window
                 var result = number.HasValue
                     ? await writer.AssignAsync(number.Value, cancellation.Token, progress, presence.RequiresRemoval, clearCard)
                     : await writer.ClearAsync(cancellation.Token, progress, presence.RequiresRemoval);
+                if (!result.Success)
+                {
+                    presence.MarkWriteAttempt();
+                    presence.Invalidate();
+                    cardInfo = null;
+                    var nextStep = result.RequiresReconnect
+                        ? "Подключитесь заново и прочитайте чип."
+                        : "Верните чип на станцию и проверьте номер. Запись автоматически не повторяется.";
+                    var message = $"Результат не подтверждён. Данные чипа могли измениться. {result.Error} {nextStep}";
+                    ShowResult(message);
+                    QueueLog(message);
+                    if (result.RequiresReconnect) await DisconnectAsync();
+                    return;
+                }
                 presence.Observe(result.Card);
                 cardInfo = new SfrCardInfo(SfrCardKind.Participant, result.Card.Number, result.Card.MarkerHex, result.CardCleared ? "05000000" : cardInfo?.HeaderHex ?? "");
                 presence.MarkWriteAttempt();
@@ -231,16 +245,6 @@ public partial class MainWindow : Window
             {
                 presence.Invalidate();
                 ShowResult("Ожидание отменено. Данные чипа не изменялись.");
-            }
-            catch (SfrWriteUnverifiedException)
-            {
-                presence.MarkWriteAttempt();
-                throw;
-            }
-            catch (SfrCardUpdateUnverifiedException)
-            {
-                presence.MarkWriteAttempt();
-                throw;
             }
             finally
             {

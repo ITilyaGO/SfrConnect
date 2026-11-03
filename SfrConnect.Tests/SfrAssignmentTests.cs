@@ -17,7 +17,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(interrupted.Concat(AssignmentExchange()).ToArray());
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.Single(transport.Writes, report => report[3] == 2);
     }
 
@@ -32,7 +32,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(interrupted.Concat(AssignmentExchange()).ToArray());
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.Single(transport.Writes, report => report[3] == 2);
     }
 
@@ -40,14 +40,19 @@ public partial class SfrWriteTests
     public async Task RemovalDuringVerificationDoesNotRepeatWriteOrSignal()
     {
         var frames = Snapshot(2).Concat(Snapshot(2)).Append(WriteAcknowledgement())
-            .Concat(new[] { Marker(), Number(3), Frame(0x2A, 6) });
+            .Concat(new[] { Marker(), Number(3), Frame(0x2A, 6), Frame(0x2A, 6), Frame(0x2A, 6) }).Concat(Snapshot(3));
         using var transport = new ScriptedStream(frames.ToArray());
         using var station = new SfrStation(transport);
-        var error = await Assert.ThrowsAsync<SfrWriteUnverifiedException>(() => new SfrNumberWriter(station).AssignAsync(3));
-        Assert.IsType<SfrCardNotReadyException>(error.InnerException);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.False(result.Success);
+        Assert.Null(result.Card);
+        Assert.Equal(SfrAssignmentFailure.WriteUnverified, result.Failure);
+        Assert.True(result.CardMayHaveChanged);
+        Assert.False(result.RequiresReconnect);
+        Assert.Contains("недоступен", result.Error);
         Assert.Single(transport.Writes, report => report[3] == 2);
         Assert.DoesNotContain(transport.Writes, report => report[3] == 3);
-        Assert.Throws<InvalidOperationException>(() => station.ReadCardNumber());
+        Assert.Equal(3, station.ReadCardNumber()!.Number);
     }
 
     [Fact]
@@ -59,7 +64,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(frames.ToArray());
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3, waitForRemoval: true);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.Single(transport.Writes, report => report[3] == 2);
     }
 
@@ -123,7 +128,7 @@ public partial class SfrWriteTests
         using var station = new SfrStation(transport);
         var stages = new List<SfrAssignmentStage>();
         var result = await new SfrNumberWriter(station).AssignAsync(3, progress: new InlineProgress(stages.Add));
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.True(result.SignalSent);
         Assert.Null(result.SignalError);
         Assert.Equal(new[] { SfrAssignmentStage.WaitingForCard, SfrAssignmentStage.Writing }, stages);
@@ -163,7 +168,7 @@ public partial class SfrWriteTests
         { OnWrite = report => { if (report[3] == 2) cancellation.Cancel(); } };
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3, cancellation.Token);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.True(result.SignalSent);
     }
 
@@ -172,7 +177,9 @@ public partial class SfrWriteTests
     {
         using var transport = new ScriptedStream(AssignmentExchange(newNumber: 2));
         using var station = new SfrStation(transport);
-        await Assert.ThrowsAsync<SfrWriteUnverifiedException>(() => new SfrNumberWriter(station).AssignAsync(3));
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.False(result.Success);
+        Assert.Equal(SfrAssignmentFailure.WriteUnverified, result.Failure);
         Assert.Single(transport.Writes, report => report[3] == 2);
         Assert.DoesNotContain(transport.Writes, report => report[3] == 3);
     }
@@ -183,7 +190,7 @@ public partial class SfrWriteTests
         using var transport = new ScriptedStream(AssignmentExchange()) { FailSignal = true };
         using var station = new SfrStation(transport);
         var result = await new SfrNumberWriter(station).AssignAsync(3);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.False(result.SignalSent);
         Assert.Equal("Signal unavailable.", result.SignalError);
     }
@@ -209,7 +216,7 @@ public partial class SfrWriteTests
         var stages = new List<SfrAssignmentStage>();
         var result = await new SfrNumberWriter(station).AssignAsync(3,
             progress: new InlineProgress(stages.Add), waitForRemoval: true);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
         Assert.Equal(new[] { SfrAssignmentStage.WaitingForRemoval, SfrAssignmentStage.WaitingForCard, SfrAssignmentStage.Writing }, stages);
         Assert.Single(transport.Writes, report => report[3] == 2);
     }
@@ -228,7 +235,7 @@ public partial class SfrWriteTests
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
         var result = await writer.AssignAsync(3);
-        Assert.Equal(3, result.Card.Number);
+        Assert.Equal(3, result.Card!.Number);
     }
 
     private sealed class InlineProgress(Action<SfrAssignmentStage> report) : IProgress<SfrAssignmentStage>

@@ -162,18 +162,22 @@ using var cancel = new CancellationTokenSource();
 try
 {
     var result = await writer.AssignAsync(123, cancel.Token);
-    Console.WriteLine($"Проверенный номер: {result.Card.Number}");
-    if (!result.SignalSent)
-        Console.WriteLine($"Номер записан, но сигнал не отправлен: {result.SignalError}");
+    if (result.Success)
+    {
+        Console.WriteLine($"Проверенный номер: {result.Card.Number}");
+        if (!result.SignalSent)
+            Console.WriteLine($"Номер записан, но сигнал не отправлен: {result.SignalError}");
+    }
+    else
+    {
+        Console.WriteLine($"Результат не подтверждён: {result.Error}");
+        // Card is null; the requested number may already have been written.
+        // Reopen only if RequiresReconnect is true, then read the card.
+    }
 }
 catch (OperationCanceledException)
 {
     Console.WriteLine("Ожидание отменено; запись не выполнялась.");
-}
-catch (SfrWriteUnverifiedException error)
-{
-    Console.WriteLine(error.Message);
-    // Reopen the station and read the card before deciding whether to write again.
 }
 ```
 
@@ -184,10 +188,22 @@ catch (SfrWriteUnverifiedException error)
 DLL обязательно проверяет запись; отмена не скрывает успех или неподтверждённую запись.
 Ошибки USB завершают команду, автоматического повтора отправленной записи нет.
 Если чип исчез или изменился во время поиска либо предварительного чтения, команда
-продолжает ожидание. Это повтор чтения до записи; после попытки записи такой сбой
-оборачивается в `SfrWriteUnverifiedException` и не повторяется автоматически.
+продолжает ожидание. После подтверждения записи номера ответ `2A 06` при проверке
+вызывает до двух дополнительных попыток полного контрольного чтения, через 200 мс
+каждая. Команда записи не повторяется. Номер, тип и маркер должны совпасть;
+несовпадение останавливает проверку сразу. Маркер не является UID: во время команды
+нельзя подменять чип другим. Тайм-ауты и повреждённые ответы не повторяются.
 
-`result.Card` содержит проверенный номер и служебное поле. `SignalSent` означает,
+`AssignAsync` и `ClearAsync` возвращают неподтверждённое изменение обычным результатом:
+`Success = false`, `Card = null`, `SignalSent = false`, `CardMayHaveChanged = true`.
+`Failure` различает `WriteUnverified` и `ClearUnverified`, `Error` содержит причину,
+`RequestedNumber` — запрошенный номер, `LastAttemptedCell` — последнюю изменяемую ячейку.
+При исчезновении чипа во время проверки номера исключение не создаётся и соединение
+остаётся доступным для чтения (`RequiresReconnect = false`). При нарушении USB-обмена
+или неподтверждённой очистке `RequiresReconnect = true`: соединение нужно открыть заново.
+Отмена ожидания, неверные аргументы и ошибки до попытки изменения сохраняют прежний контракт.
+
+При `Success = true` свойство `result.Card` содержит проверенный номер и служебное поле. `SignalSent` означает,
 что USB-команда сигнала отправлена без ошибки; фактический звук протоколом не подтверждается.
 Сбой сигнала не отменяет подтверждённую запись. Сигнал отправляется и когда нужный номер
 уже был записан и DLL проверила совпадение всех четырёх байтов.
@@ -294,7 +310,8 @@ var info = station.ReadCardInfo();
 
 var assigned = await writer.AssignAsync(123, cancellationToken, clearCard: true);
 var cleared = await writer.ClearAsync(cancellationToken);
-// cleared.Card.Number is the original number, preserved during clearing.
+if (cleared.Success)
+    Console.WriteLine(cleared.Card.Number); // Original number, preserved during clearing.
 ```
 
 Для немедленных синхронных операций доступны `station.ClearCard()` и
@@ -341,8 +358,10 @@ var cleared = await writer.ClearAsync(cancellationToken);
 Это число обменов, а не замер времени
 на физической станции; размер поддерживаемой памяти остаётся прежним.
 Очистка нескольких ячеек не является атомарной: если чип убран, USB отключён или данные
-не совпали после первой попытки записи, выбрасывается `SfrCardUpdateUnverifiedException`.
-Он содержит `RequestedNumber` (null при отдельной очистке) и `LastAttemptedCell`.
+не совпали после первой попытки записи, асинхронная команда возвращает
+`Success = false`, `Failure = ClearUnverified`. Синхронный `station.ClearCard()`
+сохраняет прежний контракт `SfrCardUpdateUnverifiedException`.
+Результат и исключение содержат `RequestedNumber` (null при отдельной очистке) и `LastAttemptedCell`.
 Чип может быть очищен частично; автоматического повтора и отката нет.
 Отмена принимается до первой попытки изменения памяти, затем операция завершается
 проверкой либо ошибкой с указанием неопределённого результата.

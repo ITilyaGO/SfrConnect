@@ -1,11 +1,30 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace SfrConnect;
 
 public enum SfrAssignmentStage { WaitingForRemoval, WaitingForCard, Writing, Clearing }
 
-/// <summary>A verified number. SignalSent confirms USB transmission, not audible feedback.</summary>
-public sealed record SfrNumberAssignmentResult(SfrCardNumber Card, bool SignalSent, string? SignalError)
+public enum SfrAssignmentFailure { WriteUnverified, ClearUnverified }
+
+/// <summary>Check Success before using Card. SignalSent confirms transmission, not audible feedback.</summary>
+public sealed record SfrNumberAssignmentResult(SfrCardNumber? Card, bool SignalSent, string? SignalError)
 {
+    [MemberNotNullWhen(true, nameof(Card))]
+    public bool Success => Card is not null;
     public bool CardCleared { get; init; }
+    public SfrAssignmentFailure? Failure { get; init; }
+    public string? Error { get; init; }
+    public int? RequestedNumber { get; init; }
+    public byte? LastAttemptedCell { get; init; }
+    public bool CardMayHaveChanged => Failure.HasValue;
+    public bool RequiresReconnect { get; init; }
+
+    internal static SfrNumberAssignmentResult Unverified(int? number, string message, byte? cell = 3, bool clearing = false, bool reconnect = false)
+        => new(null, false, null)
+        {
+            Failure = clearing ? SfrAssignmentFailure.ClearUnverified : SfrAssignmentFailure.WriteUnverified,
+            Error = message, RequestedNumber = number, LastAttemptedCell = cell, RequiresReconnect = reconnect
+        };
 }
 
 /// <summary>
@@ -54,9 +73,22 @@ public sealed class SfrNumberWriter
         {
             using var total = station.MeasureStage(number.HasValue
                 ? $"ВСЯ КОМАНДА: записать {number}{(clearCard ? " с очисткой" : "")}" : "ВСЯ КОМАНДА: очистить чип");
-            var result = await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval, clearCard))
-                .ConfigureAwait(false);
-            total.Finish();
+            SfrNumberAssignmentResult result;
+            try
+            {
+                result = await Task.Run(() => AssignCore(number, cancellationToken, progress, waitForRemoval, clearCard))
+                    .ConfigureAwait(false);
+            }
+            catch (SfrWriteUnverifiedException error)
+            {
+                result = SfrNumberAssignmentResult.Unverified(number, error.InnerException?.Message ?? error.Message, reconnect: true);
+            }
+            catch (SfrCardUpdateUnverifiedException error)
+            {
+                result = SfrNumberAssignmentResult.Unverified(number, error.InnerException?.Message ?? error.Message,
+                    error.LastAttemptedCell, clearing: true, reconnect: true);
+            }
+            total.Finish(result.Success);
             return result;
         }
         finally { Volatile.Write(ref running, 0); }
@@ -93,9 +125,14 @@ public sealed class SfrNumberWriter
                     timing.Finish();
                     if (!mustClear) timing.Next("Запись номера и проверка");
                     progress?.Report(mustClear ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);
-                    var verified = mustClear
-                        ? station.ClearCardCore(number, card.Number, cancellationToken)
-                        : station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
+                    SfrCardNumber verified;
+                    if (mustClear) verified = station.ClearCardCore(number, card.Number, cancellationToken);
+                    else
+                    {
+                        var write = station.WriteCardNumberCancellable(card.Number!.Value, number!.Value, cancellationToken);
+                        if (!write.Success) return write;
+                        verified = write.Card;
+                    }
                     try
                     {
                         timing.Next("Сигнал и пауза станции 300 мс");

@@ -178,7 +178,7 @@ public partial class SfrWriteTests
     public void RemovedCardAfterWriteDoesNotReportSuccess()
     {
         using var transport = new ScriptedStream(
-            Snapshot(2).Concat(new[] { WriteAcknowledgement(), Frame(0x2A, 6) }).ToArray());
+            Snapshot(2).Concat(new[] { WriteAcknowledgement(), Frame(0x2A, 6), Frame(0x2A, 6), Frame(0x2A, 6) }).ToArray());
         using var station = new SfrStation(transport);
         Assert.Throws<SfrWriteUnverifiedException>(() => station.WriteCardNumber(2, 3));
     }
@@ -260,6 +260,7 @@ public partial class SfrWriteTests
         public List<byte[]> Writes { get; } = [];
         public bool FailWrite { get; init; }
         public bool FailSignal { get; init; }
+        public Func<byte[]>? HeaderReply { get; init; }
         public Action<byte[]>? OnWrite { get; init; }
         public override int ReadTimeout { get; set; }
 
@@ -281,7 +282,7 @@ public partial class SfrWriteTests
             if (headerRequested)
             {
                 headerRequested = false;
-                var header = Frame(1, 4, 5, 0, 0, 0);
+                var header = HeaderReply?.Invoke() ?? Frame(1, 4, 5, 0, 0, 0);
                 header.CopyTo(buffer, offset);
                 return header.Length;
             }

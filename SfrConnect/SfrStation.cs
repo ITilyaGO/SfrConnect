@@ -119,7 +119,7 @@ public sealed partial class SfrStation : IDisposable
 
     /// <summary>
     /// Checks the current number and verifies the update. Service cards are cleared and converted.
-    /// Keep the same single card on the station. No retry or rollback is performed after a write attempt.
+    /// Keep the same single card on the station. Only unavailable verification reads are retried; writes are never repeated.
     /// </summary>
     public SfrCardNumber WriteCardNumber(int expectedCurrentNumber, int newNumber)
     {
@@ -128,11 +128,24 @@ public sealed partial class SfrStation : IDisposable
         return WriteCardNumberCore(expectedCurrentNumber, newNumber);
     }
 
-    internal SfrCardNumber WriteCardNumberCancellable(int expectedCurrentNumber, int newNumber,
-        CancellationToken cancellationToken) => WriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken, convertService: false);
+    internal SfrNumberAssignmentResult WriteCardNumberCancellable(int expectedCurrentNumber, int newNumber,
+        CancellationToken cancellationToken) => TryWriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken, convertService: false);
 
     private SfrCardNumber WriteCardNumberCore(int? expectedCurrentNumber, int newNumber,
         CancellationToken cancellationToken = default, bool convertService = true)
+    {
+        // Preserve the existing low-level synchronous contract; async commands return the outcome directly.
+        lock (sync)
+        {
+            var result = TryWriteCardNumberCore(expectedCurrentNumber, newNumber, cancellationToken, convertService);
+            if (result.Success) return result.Card;
+            exchangeFaulted = true;
+            throw new SfrWriteUnverifiedException(newNumber, new InvalidDataException(result.Error));
+        }
+    }
+
+    private SfrNumberAssignmentResult TryWriteCardNumberCore(int? expectedCurrentNumber, int newNumber,
+        CancellationToken cancellationToken, bool convertService)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(newNumber);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(newNumber, MaximumWritableCardNumber);
@@ -157,7 +170,7 @@ public sealed partial class SfrStation : IDisposable
                 if (snapshot.NumberCell.AsSpan().SequenceEqual(desiredCell))
                 {
                     log?.Invoke($"Номер уже равен {newNumber}. Запись не требуется.");
-                    return new SfrCardNumber(currentNumber, Convert.ToHexString(snapshot.Marker));
+                    return new(new SfrCardNumber(currentNumber, Convert.ToHexString(snapshot.Marker)), false, null);
                 }
 
                 var request = SfrProtocol.CreateNumberWriteReport(desiredCell);
@@ -168,15 +181,13 @@ public sealed partial class SfrStation : IDisposable
                 stream.Write(request, 0, request.Length);
                 ReadWriteResponse();
 
-                var verified = ReadSnapshot(participantOnly: true)
-                    ?? throw new IOException("Чип недоступен после записи.");
-                if (!verified.Marker.AsSpan().SequenceEqual(snapshot.Marker) ||
-                    !verified.NumberCell.AsSpan().SequenceEqual(desiredCell))
+                var verificationError = VerifyNumberWithRetries(snapshot.Marker, desiredCell);
+                if (verificationError is not null)
                 {
-                    throw new InvalidDataException("Проверка записи не пройдена: данные чипа не совпадают с ожидаемыми.");
+                    return SfrNumberAssignmentResult.Unverified(newNumber, verificationError);
                 }
                 log?.Invoke($"Запись подтверждена повторным чтением: номер {newNumber}.");
-                return new SfrCardNumber(newNumber, Convert.ToHexString(verified.Marker));
+                return new(new SfrCardNumber(newNumber, Convert.ToHexString(snapshot.Marker)), false, null);
             }
             catch (SfrCardNotReadyException) when (!writeAttempted)
             {
@@ -185,7 +196,7 @@ public sealed partial class SfrStation : IDisposable
             catch (SfrProtectedCardException error) when (!writeAttempted && error.Kind == SfrCardKind.Service)
             {
                 if (!convertService) throw new SfrCardNotReadyException("Тип чипа изменился перед записью. Повторите чтение.");
-                return ClearCardCore(newNumber, expectedCurrentNumber, cancellationToken);
+                return new(ClearCardCore(newNumber, expectedCurrentNumber, cancellationToken), false, null) { CardCleared = true };
             }
             catch (SfrProtectedCardException) when (!writeAttempted)
             {
@@ -206,6 +217,38 @@ public sealed partial class SfrStation : IDisposable
                 throw;
             }
         }
+    }
+
+    private string? VerifyNumberWithRetries(byte[] marker, byte[] number)
+    {
+        const int attempts = 3;
+        for (int attempt = 1; ; attempt++)
+        {
+            var check = CheckWrittenNumber(marker, number);
+            if (check.Error is null || !check.Unavailable || attempt == attempts) return check.Error;
+            log?.Invoke($"ЭТАП · Проверка записи · чип недоступен, повтор чтения {attempt + 1}/{attempts} через 200 мс. Запись не повторяется.");
+            // Once a write is attempted, cancellation must not hide its verification outcome.
+            Thread.Sleep(200);
+        }
+    }
+
+    private (bool Unavailable, string? Error) CheckWrittenNumber(byte[] marker, byte[] number)
+    {
+        var unavailable = (true, (string?)"Чип недоступен при проверке записи. Приложите его снова для чтения номера.");
+        var firstMarker = ReadCell(1);
+        if (firstMarker is null) return unavailable;
+        if (!firstMarker.AsSpan().SequenceEqual(marker)) return (false, "Маркер чипа изменился после записи.");
+        var header = ReadCell(4);
+        if (header is null) return unavailable;
+        if (SfrProtocol.ClassifyCard(header) != SfrCardKind.Participant)
+            return (false, "Тип чипа изменился после записи.");
+        var readback = ReadCell(3);
+        if (readback is null) return unavailable;
+        if (!readback.AsSpan().SequenceEqual(number)) return (false, "Прочитанный номер не совпадает с записываемым.");
+        var lastMarker = ReadCell(1);
+        if (lastMarker is null) return unavailable;
+        return lastMarker.AsSpan().SequenceEqual(marker)
+            ? (false, null) : (false, "Маркер чипа изменился во время проверки записи.");
     }
 
     private void EnsureExchangeAvailable()
