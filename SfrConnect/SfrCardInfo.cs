@@ -13,7 +13,7 @@ public sealed class SfrProtectedCardException : IOException
     internal SfrProtectedCardException(SfrCardKind kind, byte[] header)
         : base(kind == SfrCardKind.Service
             ? "Обнаружен служебный чип: требуется перевод в обычный режим."
-            : "Неизвестный формат чипа. Запись номера и очистка запрещены.")
+            : $"Неизвестный формат чипа (заголовок {Convert.ToHexString(header)}). Для приведения с очисткой включите FormatUnknownCards при открытии станции.")
     {
         Kind = kind;
         HeaderHex = Convert.ToHexString(header);

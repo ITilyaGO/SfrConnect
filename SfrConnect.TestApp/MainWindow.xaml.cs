@@ -281,16 +281,15 @@ public partial class MainWindow : Window
         BeepButton.IsEnabled = available && connected;
         NewNumberBox.IsEnabled = !closing && assignmentCancellation is null;
         var valid = TryGetNewNumber(out _);
-        var protectedCard = cardInfo?.Kind == SfrCardKind.Unknown;
-        WriteButton.IsEnabled = available && connected && valid && !protectedCard;
-        ClearButton.IsEnabled = available && connected && !protectedCard;
+        WriteButton.IsEnabled = available && connected && valid;
+        ClearButton.IsEnabled = available && connected;
         ClearBeforeWriteBox.IsEnabled = available;
         CancelAssignmentButton.Visibility = assignmentCancellation is null ? Visibility.Collapsed : Visibility.Visible;
         CancelAssignmentButton.IsEnabled = assignmentCancellation is not null && !assignmentCancellation.IsCancellationRequested && !closing;
         ValidationText.Text = NewNumberBox.Text.Length > 0 && !valid ? "Введите целое число от 0 до 39999." : "";
         CardNumberText.Text = presence.Current?.Number.ToString(CultureInfo.InvariantCulture) ?? "—";
         CardHintText.Text = !connected ? "Подключите станцию"
-            : protectedCard ? "Неизвестный формат — изменение запрещено"
+            : cardInfo?.Kind == SfrCardKind.Unknown ? "Неизвестный заголовок — при записи чип будет очищен и станет обычным"
             : cardInfo?.Kind == SfrCardKind.Service ? "Служебный чип — при записи или очистке станет обычным"
             : !monitoring ? "Чтение остановлено"
             : presence.RequiresRemoval ? "Уберите чип перед следующей записью"

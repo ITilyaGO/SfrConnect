@@ -59,7 +59,7 @@ public sealed class SfrNumberWriter
         IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false, bool clearCard = false)
         => RunAsync(number, cancellationToken, progress, waitForRemoval, clearCard);
 
-    /// <summary>Clears punches and converts service cards. A service card without a valid number gets zero.</summary>
+    /// <summary>Clears punches and normalizes service/allowed unknown cards. A normalized card without a valid number gets zero.</summary>
     public Task<SfrNumberAssignmentResult> ClearAsync(CancellationToken cancellationToken = default,
         IProgress<SfrAssignmentStage>? progress = null, bool waitForRemoval = false)
         => RunAsync(null, cancellationToken, progress, waitForRemoval, true);
@@ -125,9 +125,9 @@ public sealed class SfrNumberWriter
                 }
                 else if (card is not null)
                 {
-                    if (card.Kind == SfrCardKind.Unknown)
+                    if (card.Kind == SfrCardKind.Unknown && !station.FormatUnknownCards)
                         throw new SfrProtectedCardException(card.Kind, Convert.FromHexString(card.HeaderHex));
-                    bool mustClear = clearCard || card.Kind == SfrCardKind.Service;
+                    bool mustClear = clearCard || card.Kind != SfrCardKind.Participant;
                     timing.Finish();
                     if (!mustClear) timing.Next("Запись номера и проверка");
                     progress?.Report(mustClear ? SfrAssignmentStage.Clearing : SfrAssignmentStage.Writing);

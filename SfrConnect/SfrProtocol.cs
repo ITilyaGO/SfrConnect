@@ -56,9 +56,11 @@ internal static class SfrProtocol
     internal static SfrCardKind ClassifyCard(ReadOnlySpan<byte> header)
     {
         if (header.Length != 4) throw new ArgumentException("Ожидалась ячейка из четырёх байтов.", nameof(header));
-        if (header[0] >= 5 && header[1] == 0 && header[2] == 0 && header[3] == 0)
+        // SFR phone checks the mode byte; the remaining bytes need not be zero.
+        // Real participant cards include headers such as 06 00 F0 00.
+        if (header[0] >= 5 && header[1] == 0)
             return SfrCardKind.Participant;
-        // Known commands from SFR basic and SFR phone; other layouts remain protected.
+        // Keep known service modes distinct from unknown layouts requiring normalization.
         if (header.SequenceEqual(new byte[] { 0, 1, 0, 0 }) ||
             header.SequenceEqual(new byte[] { 5, 5, 5, 5 }) ||
             header.SequenceEqual(new byte[] { 3, 3, 3, 3 }) ||

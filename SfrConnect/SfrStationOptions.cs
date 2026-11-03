@@ -9,6 +9,9 @@ public sealed class SfrStationOptions
     /// <summary>Delay between verification reads while waiting for the card to return.</summary>
     public int VerificationRetryIntervalMs { get; init; } = 200;
 
+    /// <summary>Normalize unknown headers by clearing the supported memory before assignment. Existing data is erased.</summary>
+    public bool FormatUnknownCards { get; init; } = true;
+
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfNegative(VerificationReturnTimeoutMs);

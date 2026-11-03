@@ -4,7 +4,7 @@ namespace SfrConnect;
 
 public sealed partial class SfrStation
 {
-    /// <summary>Reads the card kind before interpreting its number. Service numbers are not decoded.</summary>
+    /// <summary>Reads the card kind before interpreting its number. Non-participant numbers are not decoded.</summary>
     public SfrCardInfo? ReadCardInfo()
     {
         lock (sync)
@@ -27,7 +27,7 @@ public sealed partial class SfrStation
         }
     }
 
-    /// <summary>Clears punches and converts service cards. A service card without a valid number gets zero.</summary>
+    /// <summary>Clears punches and normalizes service/allowed unknown cards. A normalized card without a valid number gets zero.</summary>
     public SfrCardNumber ClearCard() => ClearCardCore(null, null, default);
 
     /// <summary>Assigns a number, optionally clearing recorded punches in the same verified operation.</summary>
@@ -66,18 +66,20 @@ public sealed partial class SfrStation
                 var marker = ReadCell(1) ?? throw new SfrCardNotReadyException("Чип недоступен. Очистка не началась.");
                 var header = ReadCell(4) ?? throw new SfrCardNotReadyException("Чип убран при чтении счётчика.");
                 var kind = SfrProtocol.ClassifyCard(header);
-                if (kind == SfrCardKind.Unknown) throw new SfrProtectedCardException(kind, header);
-                bool service = kind == SfrCardKind.Service;
+                if (kind == SfrCardKind.Unknown && !FormatUnknownCards) throw new SfrProtectedCardException(kind, header);
+                bool normalize = kind != SfrCardKind.Participant;
+                if (normalize)
+                    log?.Invoke($"Приведение чипа к обычному формату: тип {kind}, заголовок {Convert.ToHexString(header)}. Будут очищены отметки в ячейках 02–7F.");
                 var numberCell = ReadCell(3) ?? throw new SfrCardNotReadyException("Чип убран при чтении номера.");
                 var snapshot = (Marker: marker, NumberCell: numberCell);
                 int? currentNumber = null;
                 try { currentNumber = SfrProtocol.DecodeCardNumber(numberCell); }
-                catch (InvalidDataException) when (service) { }
+                catch (InvalidDataException) when (normalize) { }
                 if (expectedNumber.HasValue && expectedNumber != currentNumber)
                     throw new InvalidOperationException("Текущий номер не совпадает с ожидаемым. Изменения не отправлены.");
                 CheckMarker(marker);
                 // SFR basic uses cells 00..7F. USB does not expose NFC system-info capacity here.
-                if (!service && header[0] > 127)
+                if (!normalize && header[0] > 127)
                     return SfrNumberAssignmentResult.PreparationFailed(newNumber,
                         "Счётчик выходит за поддерживаемые 128 ячеек. Очистка не началась.");
                 var plan = new List<(byte Cell, byte[] Data)>();
@@ -94,7 +96,7 @@ public sealed partial class SfrStation
                     retrying = true;
                     // Do not reuse a partial scan after contact is lost.
                     plan.Clear();
-                    if (service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
+                    if (normalize) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
                     for (int cell = 2; cell <= 127; cell++)
                     {
                         if (cell is 3 or 4) continue;
@@ -108,11 +110,11 @@ public sealed partial class SfrStation
                 }, "Очистка: подготовка", cancellationToken);
                 if (preparationError is not null)
                     return SfrNumberAssignmentResult.PreparationFailed(newNumber, preparationError);
-                int resultNumber = newNumber ?? (service && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
-                byte[] desiredNumber = newNumber.HasValue || service ? SfrProtocol.EncodeCardNumber(resultNumber) : snapshot.NumberCell;
+                int resultNumber = newNumber ?? (normalize && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
+                byte[] desiredNumber = newNumber.HasValue || normalize ? SfrProtocol.EncodeCardNumber(resultNumber) : snapshot.NumberCell;
                 if (!desiredNumber.AsSpan().SequenceEqual(numberCell)) plan.Add((3, desiredNumber));
                 byte[] clearedHeader = [5, 0, 0, 0];
-                if (!service && !header.AsSpan().SequenceEqual(clearedHeader)) plan.Add((4, clearedHeader));
+                if (!normalize && !header.AsSpan().SequenceEqual(clearedHeader)) plan.Add((4, clearedHeader));
                 var newMarker = Convert.FromHexString("00" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
                 plan.Add((1, newMarker));
 

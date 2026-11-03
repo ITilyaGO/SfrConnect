@@ -97,6 +97,8 @@ public partial class SfrCardMaintenanceTests
     [InlineData("05050505", SfrCardKind.Service)]
     [InlineData("05000000", SfrCardKind.Participant)]
     [InlineData("7F000000", SfrCardKind.Participant)]
+    [InlineData("0600F000", SfrCardKind.Participant)]
+    [InlineData("0500F1A5", SfrCardKind.Participant)]
     [InlineData("00000000", SfrCardKind.Unknown)]
     [InlineData("04000000", SfrCardKind.Unknown)]
     [InlineData("06010000", SfrCardKind.Unknown)]
@@ -106,12 +108,12 @@ public partial class SfrCardMaintenanceTests
     [Theory]
     [InlineData("00000000")]
     [InlineData("06010000")]
-    public async Task UnknownCardsCannotBeChangedThroughAnyEntryPoint(string header)
+    public async Task UnknownCardsCannotBeChangedWhenFormattingIsDisabled(string header)
     {
         using var transport = new CardMemory();
         transport.Cells[4] = Convert.FromHexString(header);
         transport.Cells[3] = [255, 255, 255, 255];
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { FormatUnknownCards = false });
         var info = station.ReadCardInfo();
         Assert.NotEqual(SfrCardKind.Participant, info!.Kind);
         Assert.Null(info.Number);
