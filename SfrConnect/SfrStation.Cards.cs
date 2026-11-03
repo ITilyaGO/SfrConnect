@@ -40,6 +40,7 @@ public sealed partial class SfrStation
         {
             var result = TryClearCardCore(newNumber, expectedNumber, cancellationToken);
             if (result.Success) return result.Card;
+            if (!result.CardMayHaveChanged) throw new SfrCardNotReadyException(result.Error ?? "Подготовка очистки не завершена.");
             exchangeFaulted = true;
             throw new SfrCardUpdateUnverifiedException(newNumber, result.LastAttemptedCell ?? 0,
                 new InvalidDataException(result.Error));
@@ -77,24 +78,36 @@ public sealed partial class SfrStation
                 CheckMarker(marker);
                 // SFR basic uses cells 00..7F. USB does not expose NFC system-info capacity here.
                 if (!service && header[0] > 127)
-                    throw new NotSupportedException("Очистка пока поддерживает формат SFR basic на 128 ячеек.");
+                    return SfrNumberAssignmentResult.PreparationFailed(newNumber,
+                        "Счётчик выходит за поддерживаемые 128 ячеек. Очистка не началась.");
                 var plan = new List<(byte Cell, byte[] Data)>();
-                // Neutralize the service mode first, before removing its command data.
-                if (service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
                 timing.Next("Очистка: чтение памяти и подготовка");
-                for (int cell = 2; cell <= 127; cell++)
+                bool retrying = false;
+                var preparationError = VerifyWithRetries(() =>
                 {
-                    if (cell is 3 or 4) continue;
                     cancellationToken.ThrowIfCancellationRequested();
-                    var data = ReadCell((byte)cell);
-                    if (data is null)
+                    if (retrying)
                     {
-                        CheckMarker(snapshot.Marker);
-                        throw new NotSupportedException($"Ячейка {cell:X2} недоступна. Очистка требует формата на 128 ячеек.");
+                        var identity = CheckClearPreparationIdentity(marker, header);
+                        if (identity.Error is not null) return identity;
                     }
-                    // Already empty cells need verification, but no additional write cycle.
-                    if (data.Any(value => value != 0)) plan.Add(((byte)cell, new byte[4]));
-                }
+                    retrying = true;
+                    // Do not reuse a partial scan after contact is lost.
+                    plan.Clear();
+                    if (service) plan.Add((4, new byte[] { 5, 0, 0, 0 }));
+                    for (int cell = 2; cell <= 127; cell++)
+                    {
+                        if (cell is 3 or 4) continue;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var data = ReadCell((byte)cell);
+                        if (data is null)
+                            return (true, (string?)$"Не удалось прочитать ячейку {cell:X2} при подготовке очистки. Изменения не отправлены.");
+                        if (data.Any(value => value != 0)) plan.Add(((byte)cell, new byte[4]));
+                    }
+                    return CheckClearPreparationIdentity(marker, header);
+                }, "Очистка: подготовка", cancellationToken);
+                if (preparationError is not null)
+                    return SfrNumberAssignmentResult.PreparationFailed(newNumber, preparationError);
                 int resultNumber = newNumber ?? (service && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
                 byte[] desiredNumber = newNumber.HasValue || service ? SfrProtocol.EncodeCardNumber(resultNumber) : snapshot.NumberCell;
                 if (!desiredNumber.AsSpan().SequenceEqual(numberCell)) plan.Add((3, desiredNumber));
@@ -102,10 +115,6 @@ public sealed partial class SfrStation
                 if (!service && !header.AsSpan().SequenceEqual(clearedHeader)) plan.Add((4, clearedHeader));
                 var newMarker = Convert.FromHexString("00" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
                 plan.Add((1, newMarker));
-                CheckMarker(snapshot.Marker);
-                var currentHeader = ReadCell(4) ?? throw new SfrCardNotReadyException("Чип убран перед очисткой.");
-                if (!currentHeader.AsSpan().SequenceEqual(header))
-                    throw new SfrCardNotReadyException("Счётчик изменился перед очисткой.");
 
                 var expectedHeader = header;
                 timing.Next($"Очистка: запись {plan.Count} ячеек с проверками перед записью");
@@ -175,6 +184,17 @@ public sealed partial class SfrStation
                 throw;
             }
         }
+    }
+
+    private (bool Unavailable, string? Error) CheckClearPreparationIdentity(byte[] marker, byte[] header)
+    {
+        var actualMarker = ReadCell(1);
+        if (actualMarker is null) return (true, "Чип недоступен при подготовке очистки. Изменения не отправлены.");
+        if (!actualMarker.AsSpan().SequenceEqual(marker)) return (false, "Маркер изменился при подготовке очистки. Изменения не отправлены.");
+        var actualHeader = ReadCell(4);
+        if (actualHeader is null) return (true, "Чип недоступен при проверке заголовка. Изменения не отправлены.");
+        return actualHeader.AsSpan().SequenceEqual(header)
+            ? (false, null) : (false, "Заголовок изменился при подготовке очистки. Изменения не отправлены.");
     }
 
     private (bool Unavailable, string? Error) CheckClearedMemory(byte[] marker, byte[] number,

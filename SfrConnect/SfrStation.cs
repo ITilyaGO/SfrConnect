@@ -238,20 +238,24 @@ public sealed partial class SfrStation : IDisposable
     private string? VerifyNumberWithRetries(byte[] marker, byte[] number)
         => VerifyWithRetries(() => CheckWrittenNumber(marker, number), "Проверка записи");
 
-    private string? VerifyWithRetries(Func<(bool Unavailable, string? Error)> readCheck, string stage)
+    private string? VerifyWithRetries(Func<(bool Unavailable, string? Error)> readCheck, string stage,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var check = readCheck();
         if (check.Error is null || !check.Unavailable) return check.Error;
         // A partial reappearance must not restart the return deadline.
         var started = verificationClock.GetTimestamp();
         for (int attempt = 2; ; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var remaining = verificationReturnTimeout - verificationClock.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero) return check.Error;
             var delay = remaining < verificationRetryInterval ? remaining : verificationRetryInterval;
             log?.Invoke($"ЭТАП · {stage} · ждём возвращения чипа, осталось {remaining.TotalMilliseconds:F0} мс; повтор чтения {attempt} через {delay.TotalMilliseconds:F0} мс. Запись не повторяется.");
-            // Once a write is attempted, cancellation must not hide its verification outcome.
+            // Only pre-write callers pass cancellation; verification after mutation must finish.
             verificationDelay(delay);
+            cancellationToken.ThrowIfCancellationRequested();
             if (verificationClock.GetElapsedTime(started) > verificationReturnTimeout) return check.Error;
             check = readCheck();
             if (check.Error is null || !check.Unavailable) return check.Error;

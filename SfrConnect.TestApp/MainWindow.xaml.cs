@@ -219,13 +219,15 @@ public partial class MainWindow : Window
                     : await writer.ClearAsync(cancellation.Token, progress, presence.RequiresRemoval);
                 if (!result.Success)
                 {
-                    presence.MarkWriteAttempt();
+                    if (result.CardMayHaveChanged) presence.MarkWriteAttempt();
                     presence.Invalidate();
                     cardInfo = null;
                     var nextStep = result.RequiresReconnect
                         ? "Подключитесь заново и прочитайте чип."
                         : "Верните чип на станцию и проверьте номер. Запись автоматически не повторяется.";
-                    var message = $"Результат не подтверждён. Данные чипа могли измениться. {result.Error} {nextStep}";
+                    var message = result.CardMayHaveChanged
+                        ? $"Результат не подтверждён. Данные чипа могли измениться. {result.Error} {nextStep}"
+                        : $"Подготовка не завершена. Чип не изменён. {result.Error} Приложите чип и повторите команду.";
                     ShowResult(message);
                     QueueLog(message);
                     if (result.RequiresReconnect) await DisconnectAsync();

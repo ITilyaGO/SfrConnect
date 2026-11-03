@@ -4,7 +4,7 @@ namespace SfrConnect;
 
 public enum SfrAssignmentStage { WaitingForRemoval, WaitingForCard, Writing, Clearing }
 
-public enum SfrAssignmentFailure { WriteUnverified, ClearUnverified }
+public enum SfrAssignmentFailure { WriteUnverified, ClearUnverified, PreparationFailed }
 
 /// <summary>Check Success before using Card. SignalSent confirms transmission, not audible feedback.</summary>
 public sealed record SfrNumberAssignmentResult(SfrCardNumber? Card, bool SignalSent, string? SignalError)
@@ -16,8 +16,14 @@ public sealed record SfrNumberAssignmentResult(SfrCardNumber? Card, bool SignalS
     public string? Error { get; init; }
     public int? RequestedNumber { get; init; }
     public byte? LastAttemptedCell { get; init; }
-    public bool CardMayHaveChanged => Failure.HasValue;
+    public bool CardMayHaveChanged => Failure is SfrAssignmentFailure.WriteUnverified or SfrAssignmentFailure.ClearUnverified;
     public bool RequiresReconnect { get; init; }
+
+    internal static SfrNumberAssignmentResult PreparationFailed(int? number, string message)
+        => new(null, false, null)
+        {
+            Failure = SfrAssignmentFailure.PreparationFailed, Error = message, RequestedNumber = number
+        };
 
     internal static SfrNumberAssignmentResult Unverified(int? number, string message, byte? cell = 3, bool clearing = false, bool reconnect = false)
         => new(null, false, null)

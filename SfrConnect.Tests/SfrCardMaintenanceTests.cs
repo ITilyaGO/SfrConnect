@@ -390,12 +390,20 @@ public partial class SfrCardMaintenanceTests
     }
 
     [Fact]
-    public void ShortMemoryIsRejectedBeforeAnyMutation()
+    public async Task UnreadableMemoryReturnsPreparationFailureBeforeAnyMutation()
     {
+        var clock = new MaintenanceClock();
         using var transport = new CardMemory(32);
-        using var station = new SfrStation(transport);
-        Assert.Throws<NotSupportedException>(() => station.ClearCard());
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: clock.Advance);
+        var result = await new SfrNumberWriter(station).ClearAsync();
+        Assert.False(result.Success);
+        Assert.Equal(SfrAssignmentFailure.PreparationFailed, result.Failure);
+        Assert.False(result.CardMayHaveChanged);
+        Assert.False(result.RequiresReconnect);
+        Assert.Null(result.LastAttemptedCell);
+        Assert.Equal(5000, clock.Milliseconds);
         Assert.Empty(transport.Mutations);
+        Assert.Equal(2, station.ReadCardNumber()!.Number);
     }
 
     [Fact]
