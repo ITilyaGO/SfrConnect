@@ -246,6 +246,18 @@ public class SfrCardMaintenanceTests
     }
 
     [Fact]
+    public async Task UnconfirmedWriteReplyDuringClearStopsFurtherMutations()
+    {
+        using var transport = new CardMemory { WriteReplyCode = 8 };
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).ClearAsync();
+        Assert.False(result.Success);
+        Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
+        Assert.Single(transport.Mutations);
+        Assert.DoesNotContain(transport.Requests, r => r[3] == 3);
+    }
+
+    [Fact]
     public async Task ServiceCardAppearingMidClearStopsFurtherWrites()
     {
         using var transport = new CardMemory
@@ -384,6 +396,7 @@ public class SfrCardMaintenanceTests
         public List<byte[]> Mutations { get; } = [];
         public Action<CardMemory, byte[]>? OnRequest { get; init; }
         public bool LoseWriteAck { get; init; }
+        public byte WriteReplyCode { get; init; } = 0x55;
         public byte? IgnoreWriteCell { get; init; }
         public override int ReadTimeout { get; set; }
 
@@ -413,7 +426,7 @@ public class SfrCardMaintenanceTests
             {
                 Mutations.Add(request);
                 if (address != IgnoreWriteCell) Cells[address] = request[5..9];
-                if (!LoseWriteAck) replies.Enqueue(Frame(0x2A, 0x55));
+                if (!LoseWriteAck) replies.Enqueue(Frame(0x2A, WriteReplyCode));
             }
         }
 

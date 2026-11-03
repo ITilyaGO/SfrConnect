@@ -192,12 +192,15 @@ public sealed partial class SfrStation : IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 writeAttempted = true;
                 stream.Write(request, 0, request.Length);
-                ReadWriteResponse();
+                var acknowledged = ReadWriteResponse(allowUnconfirmedReadback: true);
+                if (!acknowledged)
+                    log?.Invoke("ЭТАП · Проверка записи · получен ответ 2A 08 вместо подтверждения. Проверяем данные чтением; запись не повторяется.");
 
                 var verificationError = VerifyNumberWithRetries(snapshot.Marker, desiredCell);
                 if (verificationError is not null)
                 {
-                    return SfrNumberAssignmentResult.Unverified(newNumber, verificationError);
+                    return SfrNumberAssignmentResult.Unverified(newNumber,
+                        acknowledged ? verificationError : $"Ответ записи 2A 08. {verificationError}");
                 }
                 log?.Invoke($"Запись подтверждена повторным чтением: номер {newNumber}.");
                 return new(new SfrCardNumber(newNumber, Convert.ToHexString(snapshot.Marker)), false, null);
@@ -303,7 +306,7 @@ public sealed partial class SfrStation : IDisposable
         return (marker, numberCell);
     }
 
-    private void ReadWriteResponse()
+    private bool ReadWriteResponse(bool allowUnconfirmedReadback = false)
     {
         var started = Stopwatch.GetTimestamp();
         while (true)
@@ -314,12 +317,16 @@ public sealed partial class SfrStation : IDisposable
                 log?.Invoke("Пропущен ответ на предыдущую команду сигнала.");
                 continue;
             }
+            // Observed on hardware during a number write. Its exact meaning is undocumented;
+            // allow read-only reconciliation, never treat it as an acknowledgement or repeat the write.
+            if (allowUnconfirmedReadback && payload.AsSpan().SequenceEqual(new byte[] { 0x2A, 0x08 }))
+                return false;
             if (payload.Length != 2 || payload[0] != 0x2A || payload[1] != 0x55)
             {
                 throw new InvalidDataException($"Неожиданный ответ записи SFR: {Convert.ToHexString(payload)}");
             }
             // An acknowledgement alone does not prove the requested data reached the card.
-            return;
+            return true;
         }
     }
 

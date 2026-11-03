@@ -3,6 +3,86 @@ namespace SfrConnect.Tests;
 public partial class SfrWriteTests
 {
     [Theory]
+    [InlineData(3, true)]
+    [InlineData(2, false)]
+    public async Task WriteReply2A08UsesReadbackToDetermineOutcome(int readNumber, bool success)
+    {
+        var replies = Snapshot(2).Concat(Snapshot(2)).Append(Frame(0x2A, 8)).Concat(Snapshot(readNumber));
+        using var transport = new ScriptedStream(replies.ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.Equal(success, result.Success);
+        Assert.Equal(success, result.SignalSent);
+        Assert.False(result.RequiresReconnect);
+        Assert.Single(transport.Writes, r => r[3] == 2);
+        if (!success)
+        {
+            Assert.Null(result.Card);
+            Assert.Contains("2A 08", result.Error);
+            Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
+        }
+    }
+
+    [Fact]
+    public async Task WriteReply2A08WaitsForCardAndVerifiesWithoutAnotherWrite()
+    {
+        var clock = new VerificationTestClock();
+        var replies = Snapshot(2).Concat(Snapshot(2)).Append(Frame(0x2A, 8))
+            .Concat(Enumerable.Repeat(Frame(0x2A, 6), 21)).Concat(Snapshot(3));
+        using var transport = new ScriptedStream(replies.ToArray());
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: clock.Delay);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.True(result.Success);
+        Assert.True(result.SignalSent);
+        Assert.Equal(4200, clock.ElapsedMs);
+        Assert.Single(transport.Writes, r => r[3] == 2);
+    }
+
+    [Fact]
+    public async Task WriteReply2A08AndAbsentCardReturnFailureAfterDeadline()
+    {
+        var clock = new VerificationTestClock();
+        var replies = Snapshot(2).Concat(Snapshot(2)).Append(Frame(0x2A, 8))
+            .Concat(Enumerable.Repeat(Frame(0x2A, 6), 26)).Concat(Snapshot(2));
+        using var transport = new ScriptedStream(replies.ToArray());
+        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: clock.Delay);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.False(result.Success);
+        Assert.False(result.RequiresReconnect);
+        Assert.Contains("2A 08", result.Error);
+        Assert.Equal(5000, clock.ElapsedMs);
+        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
+        Assert.Equal(2, station.ReadCardNumber()!.Number);
+    }
+
+    [Fact]
+    public async Task WriteReply2A08DoesNotHideSubsequentUsbTimeout()
+    {
+        using var transport = new ScriptedStream(Snapshot(2).Concat(Snapshot(2)).Append(Frame(0x2A, 8)).ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.False(result.Success);
+        Assert.True(result.RequiresReconnect);
+        Assert.Single(transport.Writes, r => r[3] == 2);
+        Assert.DoesNotContain(transport.Writes, r => r[3] == 3);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OtherWriteRepliesRemainProtocolErrors(bool extraPayload)
+    {
+        var reply = extraPayload ? Frame(0x2A, 8, 0) : Frame(0x2A, 9);
+        using var transport = new ScriptedStream(Snapshot(2).Concat(Snapshot(2)).Append(reply).ToArray());
+        using var station = new SfrStation(transport);
+        var result = await new SfrNumberWriter(station).AssignAsync(3);
+        Assert.False(result.Success);
+        Assert.True(result.RequiresReconnect);
+        Assert.Equal(9, transport.Writes.Count);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
