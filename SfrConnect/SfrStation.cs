@@ -258,7 +258,7 @@ public sealed partial class SfrStation : IDisposable
         }
     }
 
-    private (bool Unavailable, string? Error) CheckWrittenNumber(byte[] marker, byte[] number)
+    private (bool Unavailable, string? Error) CheckWrittenNumber(byte[] marker, byte[] number, byte[]? expectedHeader = null)
     {
         var unavailable = (true, (string?)"Чип недоступен при проверке записи. Приложите его снова для чтения номера.");
         var firstMarker = ReadCell(1);
@@ -268,6 +268,8 @@ public sealed partial class SfrStation : IDisposable
         if (header is null) return unavailable;
         if (SfrProtocol.ClassifyCard(header) != SfrCardKind.Participant)
             return (false, "Тип чипа изменился после записи.");
+        if (expectedHeader is not null && !header.AsSpan().SequenceEqual(expectedHeader))
+            return (false, "Заголовок чипа изменился после очистки.");
         var readback = ReadCell(3);
         if (readback is null) return unavailable;
         if (!readback.AsSpan().SequenceEqual(number)) return (false, "Прочитанный номер не совпадает с записываемым.");

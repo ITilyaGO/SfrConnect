@@ -151,23 +151,17 @@ public sealed partial class SfrStation
                         expectedHeader = item.Data;
                     }
                 }
-                // One final pass covers both changed cells and the previously empty tail.
-                // Bracket this read-only pass instead of reading the marker before every cell.
-                timing.Next("Очистка: итоговая проверка памяти 02–7F");
-                CheckMarker(newMarker);
-                byte[] empty = new byte[4];
-                for (int cell = 2; cell <= 127; cell++)
+                // Restart the whole read-only pass after a loss, so success never combines partial reads.
+                var verificationError = VerifyWithRetries(() =>
                 {
-                    var expected = cell == 3 ? desiredNumber : cell == 4 ? clearedHeader : empty;
-                    var readback = ReadCell((byte)cell);
-                    if (readback is null || !readback.AsSpan().SequenceEqual(expected))
-                        throw new InvalidDataException($"Итоговая проверка ячейки {cell:X2} не пройдена.");
-                }
-                timing.Next("Очистка: завершающая проверка номера и типа");
-                var verified = ReadSnapshot(participantOnly: true)
-                    ?? throw new IOException("Чип убран после очистки.");
-                if (!verified.Marker.AsSpan().SequenceEqual(newMarker) || !verified.NumberCell.AsSpan().SequenceEqual(desiredNumber))
-                    throw new InvalidDataException("Итоговая проверка номера после очистки не пройдена.");
+                    timing.Next("Очистка: итоговая проверка памяти 02–7F");
+                    var check = CheckClearedMemory(newMarker, desiredNumber, clearedHeader,
+                        () => timing.Next("Очистка: завершающая проверка номера и типа"));
+                    if (check.Error is not null) timing.Finish(success: false);
+                    return check;
+                }, "Очистка: итоговая проверка");
+                if (verificationError is not null)
+                    return SfrNumberAssignmentResult.Unverified(newNumber, verificationError, lastCell, clearing: true);
                 timing.Finish();
                 return new(new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker)), false, null) { CardCleared = true };
             }
@@ -181,6 +175,25 @@ public sealed partial class SfrStation
                 throw;
             }
         }
+    }
+
+    private (bool Unavailable, string? Error) CheckClearedMemory(byte[] marker, byte[] number,
+        byte[] header, Action beforeNumberCheck)
+    {
+        var firstMarker = ReadCell(1);
+        if (firstMarker is null) return (true, "Чип недоступен перед итоговой проверкой очистки.");
+        if (!firstMarker.AsSpan().SequenceEqual(marker)) return (false, "Маркер чипа изменился после очистки.");
+        byte[] empty = new byte[4];
+        for (int cell = 2; cell <= 127; cell++)
+        {
+            var expected = cell == 3 ? number : cell == 4 ? header : empty;
+            var readback = ReadCell((byte)cell);
+            if (readback is null) return (true, $"Чип недоступен при итоговой проверке ячейки {cell:X2}.");
+            if (!readback.AsSpan().SequenceEqual(expected))
+                return (false, $"Итоговая проверка ячейки {cell:X2} не пройдена: данные не совпадают.");
+        }
+        beforeNumberCheck();
+        return CheckWrittenNumber(marker, number, header);
     }
 
     private string? VerifyClearCell(byte cell, byte[] desired, byte[] expectedMarker, byte[] expectedHeader)

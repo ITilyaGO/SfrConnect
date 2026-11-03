@@ -1,6 +1,6 @@
 namespace SfrConnect.Tests;
 
-public class SfrCardMaintenanceTests
+public partial class SfrCardMaintenanceTests
 {
     [Theory]
     [InlineData("empty", 264, 1)]
