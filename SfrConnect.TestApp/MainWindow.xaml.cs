@@ -109,7 +109,7 @@ public partial class MainWindow : Window
             if (DevicesBox.SelectedItem is not SfrDeviceInfo device) return;
             var options = new SfrStationOptions
             {
-                ClearMode = QuickClearBox.IsChecked == true ? SfrClearMode.ThroughLastNonEmptyCell : SfrClearMode.FullMemory
+                ClearMode = QuickClearBox.IsChecked == true ? SfrClearMode.FullMemory : SfrClearMode.AfterEachWrite
             };
             station = await Task.Run(() => SfrStation.Open(device.DevicePath, QueueLog, options));
             numberWriter = new SfrNumberWriter(station);
@@ -241,7 +241,9 @@ public partial class MainWindow : Window
                 cardInfo = new SfrCardInfo(SfrCardKind.Participant, result.Card.Number, result.Card.MarkerHex, result.CardCleared ? "05000000" : cardInfo?.HeaderHex ?? "");
                 presence.MarkWriteAttempt();
                 var completed = result.CardCleared
-                    ? $"Очистка до ячейки {result.ClearedThroughCell:X2} проверена, номер {result.Card.Number} проверен"
+                    ? result.AppliedClearMode == SfrClearMode.AfterEachWrite
+                        ? $"Каждая запись очистки проверена, номер {result.Card.Number} подтверждён"
+                        : $"Очистка до ячейки {result.ClearedThroughCell:X2} проверена, номер {result.Card.Number} проверен"
                     : $"Номер {result.Card.Number} проверен";
                 ShowResult(result.SignalSent
                     ? $"{completed}, сигнал отправлен. Можно убрать чип."

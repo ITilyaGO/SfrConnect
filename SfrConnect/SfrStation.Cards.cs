@@ -119,7 +119,11 @@ public sealed partial class SfrStation
                 // Keep the boundary from the completed full scan; cell 04 is not the source of this limit.
                 byte lastClearCell = !normalize && clearMode == SfrClearMode.ThroughLastNonEmptyCell
                     ? lastOccupiedCell : (byte)127;
-                log?.Invoke($"ЭТАП · Очистка: диапазон итоговой проверки 02–{lastClearCell:X2} · " +
+                var appliedMode = normalize && clearMode == SfrClearMode.ThroughLastNonEmptyCell
+                    ? SfrClearMode.FullMemory : clearMode;
+                log?.Invoke(appliedMode == SfrClearMode.AfterEachWrite
+                    ? "ЭТАП · Очистка: проверка каждой ячейки сразу после записи; в конце — номер, тип и маркер, без повторного прохода памяти."
+                    : $"ЭТАП · Очистка: диапазон итоговой проверки 02–{lastClearCell:X2} · " +
                     (lastClearCell < 127 ? "по последней непустой ячейке; пустой хвост прочитан при подготовке и повторно не проверяется."
                         : "полный поддерживаемый диапазон."));
                 int resultNumber = newNumber ?? (normalize && (currentNumber is null || currentNumber > MaximumWritableCardNumber) ? 0 : currentNumber!.Value);
@@ -131,7 +135,8 @@ public sealed partial class SfrStation
                 plan.Add((1, newMarker));
 
                 var expectedHeader = header;
-                timing.Next($"Очистка: запись {plan.Count} ячеек с проверками перед записью");
+                timing.Next($"Очистка: запись {plan.Count} ячеек" + (appliedMode == SfrClearMode.AfterEachWrite
+                    ? " с немедленной проверкой каждой" : " с проверками перед записью"));
                 foreach (var item in plan)
                 {
                     // Cancellation after the first attempted mutation must not hide a partial operation.
@@ -158,28 +163,32 @@ public sealed partial class SfrStation
                             return SfrNumberAssignmentResult.Unverified(newNumber,
                                 $"Ответ записи 2A 08, ячейка {item.Cell:X2}. {error}", item.Cell, clearing: true);
                     }
-                    // Confirm a mode change immediately, especially before erasing service commands.
-                    // All other data is checked together in the final memory pass.
-                    if (item.Cell == 4)
+                    // A positive acknowledgement is not proof that memory changed.
+                    // On contact loss, retry only readback, with the expected identity and header.
+                    if (acknowledged && (appliedMode == SfrClearMode.AfterEachWrite || item.Cell == 4))
                     {
-                        if (acknowledged)
-                        {
-                            var readback = ReadCell(4);
-                            var error = readback is null
-                                ? VerifyClearCell(4, item.Data, snapshot.Marker, item.Data)
-                                : readback.AsSpan().SequenceEqual(item.Data) ? null : "Не подтверждён сброс заголовка после очистки.";
-                            if (error is not null)
-                                return SfrNumberAssignmentResult.Unverified(newNumber, error, item.Cell, clearing: true);
-                        }
-                        expectedHeader = item.Data;
+                        var readback = ReadCell(item.Cell);
+                        var error = readback is null
+                            ? VerifyClearCell(item.Cell, item.Data,
+                                item.Cell == 1 ? newMarker : snapshot.Marker,
+                                item.Cell == 4 ? item.Data : expectedHeader)
+                            : readback.AsSpan().SequenceEqual(item.Data) ? null
+                                : $"Проверка ячейки {item.Cell:X2} сразу после записи не пройдена: данные не совпадают.";
+                        if (error is not null)
+                            return SfrNumberAssignmentResult.Unverified(newNumber, error, item.Cell, clearing: true);
                     }
+                    if (item.Cell == 4) expectedHeader = item.Data;
                 }
                 // Restart the whole read-only pass after a loss, so success never combines partial reads.
                 var verificationError = VerifyWithRetries(() =>
                 {
-                    timing.Next($"Очистка: итоговая проверка памяти 02–{lastClearCell:X2}");
-                    var check = CheckClearedMemory(newMarker, desiredNumber, clearedHeader, lastClearCell,
-                        () => timing.Next("Очистка: завершающая проверка номера и типа"));
+                    timing.Next(appliedMode == SfrClearMode.AfterEachWrite
+                        ? "Очистка: завершающая проверка номера, типа и маркера"
+                        : $"Очистка: итоговая проверка памяти 02–{lastClearCell:X2}");
+                    var check = appliedMode == SfrClearMode.AfterEachWrite
+                        ? CheckWrittenNumber(newMarker, desiredNumber, clearedHeader)
+                        : CheckClearedMemory(newMarker, desiredNumber, clearedHeader, lastClearCell,
+                            () => timing.Next("Очистка: завершающая проверка номера и типа"));
                     if (check.Error is not null) timing.Finish(success: false);
                     return check;
                 }, "Очистка: итоговая проверка");
@@ -187,7 +196,7 @@ public sealed partial class SfrStation
                     return SfrNumberAssignmentResult.Unverified(newNumber, verificationError, lastCell, clearing: true);
                 timing.Finish();
                 return new(new SfrCardNumber(resultNumber, Convert.ToHexString(newMarker)), false, null)
-                { CardCleared = true, ClearedThroughCell = lastClearCell };
+                { CardCleared = true, ClearedThroughCell = lastClearCell, AppliedClearMode = appliedMode };
             }
             catch (SfrCardNotReadyException) when (!attempted) { throw; }
             catch (SfrProtectedCardException) when (!attempted) { throw; }

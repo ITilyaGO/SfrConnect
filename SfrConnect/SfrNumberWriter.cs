@@ -12,8 +12,9 @@ public sealed record SfrNumberAssignmentResult(SfrCardNumber? Card, bool SignalS
     [MemberNotNullWhen(true, nameof(Card))]
     public bool Success => Card is not null;
     public bool CardCleared { get; init; }
-    /// <summary>Last cell in the final verification pass on success; null when no clearing was confirmed. In shortened mode the empty tail is checked only before writing.</summary>
+    /// <summary>Covered memory boundary on successful clearing; consult AppliedClearMode for when cells were verified.</summary>
     public byte? ClearedThroughCell { get; init; }
+    public SfrClearMode? AppliedClearMode { get; init; }
     public SfrAssignmentFailure? Failure { get; init; }
     public string? Error { get; init; }
     public int? RequestedNumber { get; init; }
@@ -144,13 +145,13 @@ public sealed class SfrNumberWriter
                         station.Beep();
                         timing.Finish();
                         return new SfrNumberAssignmentResult(verified, true, null)
-                        { CardCleared = mustClear, ClearedThroughCell = write.ClearedThroughCell };
+                        { CardCleared = mustClear, ClearedThroughCell = write.ClearedThroughCell, AppliedClearMode = write.AppliedClearMode };
                     }
                     catch (Exception error)
                     {
                         // A signal failure cannot turn a verified write into a failed write.
                         return new SfrNumberAssignmentResult(verified, false, error.Message)
-                        { CardCleared = mustClear, ClearedThroughCell = write.ClearedThroughCell };
+                        { CardCleared = mustClear, ClearedThroughCell = write.ClearedThroughCell, AppliedClearMode = write.AppliedClearMode };
                     }
                 }
             }

@@ -3,7 +3,8 @@ namespace SfrConnect;
 public enum SfrClearMode
 {
     FullMemory,
-    ThroughLastNonEmptyCell
+    ThroughLastNonEmptyCell,
+    AfterEachWrite
 }
 
 /// <summary>Settings captured when a station connection is opened.</summary>
@@ -18,8 +19,8 @@ public sealed class SfrStationOptions
     /// <summary>Normalize unknown headers by clearing the supported memory before assignment. Existing data is erased.</summary>
     public bool FormatUnknownCards { get; init; } = true;
 
-    /// <summary>ThroughLastNonEmptyCell scans all memory first, then verifies through the last occupied cell. Service and unknown cards always use FullMemory.</summary>
-    public SfrClearMode ClearMode { get; init; } = SfrClearMode.FullMemory;
+    /// <summary>AfterEachWrite verifies every mutation immediately and finishes with identity/number checks. The other modes retain an additional memory pass.</summary>
+    public SfrClearMode ClearMode { get; init; } = SfrClearMode.AfterEachWrite;
 
     internal void Validate()
     {

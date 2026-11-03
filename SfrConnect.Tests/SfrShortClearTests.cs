@@ -52,11 +52,11 @@ public partial class SfrCardMaintenanceTests
     }
 
     [Fact]
-    public async Task FullClearRemainsDefaultAndVerifiesEmptyTail()
+    public async Task FullClearRemainsAvailableAndVerifiesEmptyTail()
     {
-        Assert.Equal(SfrClearMode.FullMemory, new SfrStationOptions().ClearMode);
+        Assert.Equal(SfrClearMode.AfterEachWrite, new SfrStationOptions().ClearMode);
         using var transport = new CardMemory();
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.True(result.Success);
         Assert.Equal((byte)127, result.ClearedThroughCell);
@@ -216,7 +216,7 @@ public partial class SfrCardMaintenanceTests
     {
         using var full = new CardMemory();
         using var fast = new CardMemory();
-        using var fullStation = new SfrStation(full);
+        using var fullStation = new SfrStation(full, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         using var fastStation = new SfrStation(fast,
             options: new SfrStationOptions { ClearMode = SfrClearMode.ThroughLastNonEmptyCell });
         fullStation.ClearCard();

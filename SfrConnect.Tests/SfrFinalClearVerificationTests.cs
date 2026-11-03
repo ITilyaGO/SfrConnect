@@ -23,7 +23,7 @@ public partial class SfrCardMaintenanceTests
                 }
             }
         };
-        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: delay =>
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory }, verificationClock: clock, verificationDelay: delay =>
         {
             clock.Advance(delay);
             if (clock.Milliseconds >= 4200)
@@ -62,7 +62,7 @@ public partial class SfrCardMaintenanceTests
                 }
             }
         };
-        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: clock.Advance);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory }, verificationClock: clock, verificationDelay: clock.Advance);
         var result = await new SfrNumberWriter(station).AssignAsync(56, clearCard: true);
         Assert.False(result.Success);
         Assert.False(result.RequiresReconnect);
@@ -88,7 +88,7 @@ public partial class SfrCardMaintenanceTests
             }
         };
         using var station = new SfrStation(transport,
-            options: new SfrStationOptions { VerificationReturnTimeoutMs = 1000 },
+            options: new SfrStationOptions { VerificationReturnTimeoutMs = 1000, ClearMode = SfrClearMode.FullMemory },
             verificationClock: clock, verificationDelay: delay => { clock.Advance(delay); transport.Present = true; });
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.False(result.Success);
@@ -115,7 +115,7 @@ public partial class SfrCardMaintenanceTests
                 }
             }
         };
-        using var station = new SfrStation(transport, verificationClock: clock, verificationDelay: delay =>
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory }, verificationClock: clock, verificationDelay: delay =>
         {
             clock.Advance(delay);
             transport.Cells[markerChanged ? 1 : 5][0] ^= 1;
@@ -139,7 +139,7 @@ public partial class SfrCardMaintenanceTests
                     throw new TimeoutException("USB read interrupted");
             }
         };
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.False(result.Success);
         Assert.True(result.RequiresReconnect);
@@ -159,7 +159,7 @@ public partial class SfrCardMaintenanceTests
                     memory.Cells[4][0] = 6;
             }
         };
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.False(result.Success);
         Assert.False(result.RequiresReconnect);

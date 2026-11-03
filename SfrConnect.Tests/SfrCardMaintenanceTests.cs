@@ -17,7 +17,7 @@ public partial class SfrCardMaintenanceTests
         }
         else if (layout == "sparse") transport.Cells[126] = [31, 1, 2, 3];
         else foreach (var cell in transport.Cells.Skip(5)) cell[0] = 31;
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
 
         station.ClearCard();
 
@@ -63,7 +63,7 @@ public partial class SfrCardMaintenanceTests
                     memory.Cells[1][0] ^= 1;
             }
         };
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         var result = await new SfrNumberWriter(station).ClearAsync();
         Assert.False(result.Success);
         Assert.Equal(SfrAssignmentFailure.ClearUnverified, result.Failure);
@@ -80,7 +80,7 @@ public partial class SfrCardMaintenanceTests
                 if (request[3] == 2 && request[4] == 1) memory.Cells[2] = [1, 2, 3, 4];
             }
         };
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         Assert.Throws<SfrCardUpdateUnverifiedException>(() => station.ClearCard());
     }
 
@@ -154,7 +154,7 @@ public partial class SfrCardMaintenanceTests
     {
         using var transport = new CardMemory();
         var logs = new List<string>();
-        using var station = new SfrStation(transport, logs.Add);
+        using var station = new SfrStation(transport, logs.Add, new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         var result = await new SfrNumberWriter(station).AssignAsync(123, clearCard: true);
         Assert.Equal(123, result.Card!.Number);
         Assert.True(result.CardCleared);
@@ -387,7 +387,7 @@ public partial class SfrCardMaintenanceTests
         {
             OnRequest = (memory, request) => { if (request[3] == 2 && request[4] == 1) memory.Cells[127] = [1, 2, 3, 4]; }
         };
-        using var station = new SfrStation(transport);
+        using var station = new SfrStation(transport, options: new SfrStationOptions { ClearMode = SfrClearMode.FullMemory });
         Assert.Throws<SfrCardUpdateUnverifiedException>(() => station.ClearCard());
     }
 
